@@ -24,8 +24,15 @@ if not TOKEN:
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
-CHANNEL_ID = "-1001973498255"  # Fixed numeric format for private channel
+CHANNEL_ID = "-1002443114227"  # Fixed numeric format for private channel
 CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
+
+# Message when user is not subscribed
+SUBSCRIBE_MESSAGE = (
+    "⚠️ Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
+    f"{CHANNEL_LINK}\n\n"
+    "Setelah join, silakan coba command kembali."
+)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
@@ -136,12 +143,11 @@ async def handle_generation(message: Message):
 
     # Check channel subscription
     if not await check_subscription(user_id):
-        await message.reply(
-            "⚠️ Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
-            f"{CHANNEL_LINK}\n\n"
-            "Setelah join, silakan coba command kembali."
-        )
+        logger.warning(f"User {user_id} tried to use bot without joining channel")
+        await message.reply(SUBSCRIBE_MESSAGE)
         return
+
+    logger.info(f"User {user_id} verified as channel member, processing command: {message.text}")
 
     # Check if user is locked
     if user_id in user_locks:
