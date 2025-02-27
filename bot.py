@@ -7,6 +7,7 @@ from aiogram.types import Message
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
 from username_checker import check_telegram_username
+from username_store import UsernameStore
 
 # Get token from environment variable with fallback
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
@@ -15,6 +16,9 @@ dp = Dispatcher()
 
 # User locks to prevent spam
 user_locks = {}
+
+# Username store
+username_store = UsernameStore()
 
 # Generation methods mapping
 METHODS = {
@@ -29,8 +33,14 @@ METHODS = {
 async def generate_and_check(base_name: str, method: str) -> list:
     """Generate usernames and check their availability"""
     generator_func = METHODS[method]
-    usernames = generator_func(base_name)
+    all_usernames = generator_func(base_name)
     results = []
+
+    # Filter out previously generated usernames
+    usernames = [
+        username for username in all_usernames 
+        if not username_store.is_generated(base_name, username)
+    ]
 
     # Rate limiting - process in smaller batches
     batch_size = 5
@@ -40,6 +50,8 @@ async def generate_and_check(base_name: str, method: str) -> list:
             is_available = await check_telegram_username(username)
             status = "✅ Tersedia" if is_available else "❌ Tidak Tersedia"
             results.append(f"{username} - {status}")
+            # Store generated username
+            username_store.add_username(base_name, username)
         # Add small delay between batches
         if i + batch_size < len(usernames):
             await asyncio.sleep(2)
@@ -60,6 +72,10 @@ Gunakan command berikut:
 /kurkuf [username] - Hapus karakter acak
 
 Contoh: /ganhur username
+
+⚠️ Note: 
+- Username yang sudah di-generate akan disimpan dan tidak akan muncul lagi dalam 1 jam ke depan
+- Bot akan menghapus data username yang tersimpan setelah 1 jam
 """
     await message.reply(help_text)
 
@@ -96,8 +112,12 @@ async def handle_generation(message: Message):
     user_locks[user_id] = True
 
     try:
-        # Send processing message
-        processing_msg = await message.reply(
+        # Send warning message
+        warning_msg = await message.reply(
+            "⚠️ <b>Peringatan</b>\n"
+            "- Username yang sudah di-generate akan disimpan\n"
+            "- Username tersimpan tidak akan muncul lagi dalam hasil generate\n"
+            "- Data username akan dihapus otomatis setelah 1 jam\n\n"
             f"🔄 Generating '{command}' dari '{base_name}'...\n"
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
@@ -110,7 +130,7 @@ async def handle_generation(message: Message):
             await message.answer(f"{i}. {result}")
             await asyncio.sleep(1.5)  # Delay between messages
 
-        await processing_msg.edit_text("✅ Generasi username selesai!")
+        await warning_msg.edit_text("✅ Generasi username selesai!")
 
     except Exception as e:
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
@@ -121,6 +141,9 @@ async def handle_generation(message: Message):
             del user_locks[user_id]
 
 async def main():
+    # Start username cleanup task
+    asyncio.create_task(username_store.start_cleanup_task())
+
     print("✅ Bot is running...")
     await dp.start_polling(bot)
 
