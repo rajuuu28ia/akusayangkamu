@@ -3,7 +3,7 @@ import os
 import re
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
 from username_checker import check_telegram_username, TelegramUsernameChecker
@@ -11,6 +11,9 @@ from username_store import UsernameStore
 
 # Get token from environment variable with fallback
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
+CHANNEL_ID = "-100xo6vdaZALL9jN2Zl"  # Perlu ditambahkan "-100" untuk channel private
+CHANNEL_LINK = "https://t.me/+xo6vdaZALL9jN2Zl"
+
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -29,6 +32,15 @@ METHODS = {
     "switch": UsernameGenerator.switch,
     "kurkuf": UsernameGenerator.kurkuf
 }
+
+async def check_subscription(user_id: int) -> bool:
+    """Check if user is subscribed to the channel"""
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+    except Exception as e:
+        print(f"Error checking subscription: {e}")
+        return False
 
 async def generate_and_check(base_name: str, method: str) -> list:
     """Generate usernames and check their availability"""
@@ -71,7 +83,11 @@ async def cmd_start(message: Message):
     help_text = """
 🤖 Bot Generator Username Telegram
 
-Gunakan command berikut:
+⚠️ Untuk menggunakan bot ini:
+1️⃣ Join channel kami terlebih dahulu:
+   {channel_link}
+2️⃣ Setelah join, gunakan command berikut:
+
 /ganhur [username] - Substitusi huruf acak
 /canon [username] - Tukar huruf i/l
 /sop [username] - Tambah karakter acak
@@ -84,12 +100,21 @@ Contoh: /ganhur username
 ⚠️ Note: 
 - Username yang sudah di-generate akan disimpan dan tidak akan muncul lagi dalam 1 jam ke depan
 - Bot akan menghapus data username yang tersimpan setelah 1 jam
-"""
+""".format(channel_link=CHANNEL_LINK)
     await message.reply(help_text)
 
 @dp.message(Command("ganhur", "canon", "sop", "scanon", "switch", "kurkuf"))
 async def handle_generation(message: Message):
     user_id = message.from_user.id
+
+    # Check channel subscription
+    if not await check_subscription(user_id):
+        await message.reply(
+            "⚠️ Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
+            f"{CHANNEL_LINK}\n\n"
+            "Setelah join, silakan coba command kembali."
+        )
+        return
 
     # Check if user is locked
     if user_id in user_locks:
