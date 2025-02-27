@@ -1,0 +1,23 @@
+# Application Configuration
+app:
+  name: Telegram Username Checker
+  version: 1.0.0
+
+# Checker Configuration
+checker:
+  batch_size: 5
+  max_usernames: 30
+  retry_delay: 2
+  max_retries: 3
+
+# Bot Configuration
+bot:
+  timeout: 30
+  workers: 4
+  allowed_updates: ["message", "callback_query"]
+
+# Logging Configuration
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
