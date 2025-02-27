@@ -1,7 +1,7 @@
 import asyncio
+import logging
 import os
 import re
-import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -13,15 +13,19 @@ from username_store import UsernameStore
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # Get token from environment variable with fallback
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
-CHANNEL_ID = "-100xo6vdaZALL9jN2Zl"  # Perlu ditambahkan "-100" untuk channel private
-CHANNEL_LINK = "https://t.me/+xo6vdaZALL9jN2Zl"
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
+
+# Channel information
+INVITE_LINK = "xo6vdaZALL9jN2Zl"
+CHANNEL_ID = "-1001973498255"  # Fixed numeric format for private channel
+CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
@@ -35,7 +39,7 @@ username_store = UsernameStore()
 # Generation methods mapping
 METHODS = {
     "ganhur": UsernameGenerator.ganhur,
-    "canon": UsernameGenerator.canon,
+    "canon": UsernameGenerator.canon, 
     "sop": UsernameGenerator.sop,
     "scanon": UsernameGenerator.scanon,
     "switch": UsernameGenerator.switch,
@@ -45,14 +49,24 @@ METHODS = {
 async def check_subscription(user_id: int) -> bool:
     """Check if user is subscribed to the channel"""
     try:
-        logger.info(f"Checking subscription for user {user_id}")
+        logger.info(f"Checking subscription for user {user_id} in channel {CHANNEL_ID}")
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
         logger.info(f"User {user_id} subscription status: {member.status}, is_member: {is_member}")
         return is_member
     except Exception as e:
         logger.error(f"Error checking subscription for user {user_id}: {str(e)}")
-        return False
+        # Try alternative method using invite link
+        try:
+            chat = await bot.get_chat(CHANNEL_ID)
+            logger.info(f"Successfully got chat info: {chat.title}")
+            member = await bot.get_chat_member(chat_id=chat.id, user_id=user_id)
+            is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+            logger.info(f"Alternative check - User {user_id} status: {member.status}, is_member: {is_member}")
+            return is_member
+        except Exception as e2:
+            logger.error(f"Alternative check failed: {str(e2)}")
+            return False
 
 async def generate_and_check(base_name: str, method: str) -> list:
     """Generate usernames and check their availability"""
@@ -90,30 +104,31 @@ async def generate_and_check(base_name: str, method: str) -> list:
 
     return results
 
-@dp.message(Command("start", "help"))
+@dp.message(Command("start"))
 async def cmd_start(message: Message):
-    help_text = """
-🤖 Bot Generator Username Telegram
+    """Send a message when the command /start is issued."""
+    welcome_msg = (
+        "👋 Selamat datang di Bot Generator Username Telegram!\n\n"
+        "⚠️ Untuk menggunakan bot ini:\n"
+        f"1️⃣ Join channel kami terlebih dahulu:\n   {CHANNEL_LINK}\n\n"
+        "2️⃣ Setelah join, gunakan command berikut:\n"
+        "/ganhur [username] - Substitusi huruf acak\n"
+        "/canon [username] - Tukar huruf i/l\n"
+        "/sop [username] - Tambah karakter acak\n"
+        "/scanon [username] - Tambah 's'\n"
+        "/switch [username] - Tukar karakter bersebelahan\n"
+        "/kurkuf [username] - Hapus karakter acak\n\n"
+        "Contoh: /ganhur username\n\n"
+        "⚠️ Note:\n"
+        "- Username yang sudah di-generate akan disimpan\n"
+        "- Data username akan dihapus otomatis setelah 1 jam"
+    )
+    await message.reply(welcome_msg)
 
-⚠️ Untuk menggunakan bot ini:
-1️⃣ Join channel kami terlebih dahulu:
-   {channel_link}
-2️⃣ Setelah join, gunakan command berikut:
-
-/ganhur [username] - Substitusi huruf acak
-/canon [username] - Tukar huruf i/l
-/sop [username] - Tambah karakter acak
-/scanon [username] - Tambah 's'
-/switch [username] - Tukar karakter bersebelahan
-/kurkuf [username] - Hapus karakter acak
-
-Contoh: /ganhur username
-
-⚠️ Note: 
-- Username yang sudah di-generate akan disimpan dan tidak akan muncul lagi dalam 1 jam ke depan
-- Bot akan menghapus data username yang tersimpan setelah 1 jam
-""".format(channel_link=CHANNEL_LINK)
-    await message.reply(help_text)
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    """Send a message when the command /help is issued."""
+    await cmd_start(message)
 
 @dp.message(Command("ganhur", "canon", "sop", "scanon", "switch", "kurkuf"))
 async def handle_generation(message: Message):
@@ -130,7 +145,7 @@ async def handle_generation(message: Message):
 
     # Check if user is locked
     if user_id in user_locks:
-        await message.reply("⏳ Tunggu proses sebelumnya selesai dulu!")
+        await message.reply("⚠️ Tunggu proses sebelumnya selesai dulu!")
         return
 
     # Parse command
@@ -194,7 +209,7 @@ async def main():
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
 
-    print("✅ Bot is running...")
+    logger.info("✅ Bot is running...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

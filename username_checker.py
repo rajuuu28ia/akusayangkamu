@@ -3,6 +3,7 @@ import asyncio
 import logging
 import re
 import json
+import os
 from lxml import html
 from config import RESERVED_WORDS
 
@@ -26,13 +27,24 @@ class TelegramUsernameChecker:
         # Store last request time for rate limiting
         self.last_request_time = 0
         # Initial delay for exponential backoff
-        self.base_delay = 3 # Increased delay
+        self.base_delay = 3  # Increased delay
+
+        # Get API credentials
+        self.api_id = os.getenv("TELEGRAM_API_ID")
+        self.api_hash = os.getenv("TELEGRAM_API_HASH")
+
+        if not all([self.api_id, self.api_hash]):
+            logger.warning("Telegram API credentials not found. Some features may be limited.")
 
     async def get_api_url(self):
         """Get Fragment API URL"""
         async with GLOBAL_SEMAPHORE:
             async with self.rate_semaphore:
-                async with self.session.get('https://fragment.com') as response:
+                headers = {
+                    'X-Api-Id': self.api_id,
+                    'X-Api-Hash': self.api_hash
+                }
+                async with self.session.get('https://fragment.com', headers=headers) as response:
                     text = await response.text()
                     tree = html.fromstring(text)
                     scripts = tree.xpath('//script/text()')
@@ -47,8 +59,12 @@ class TelegramUsernameChecker:
         """Check user status via Fragment API"""
         async with GLOBAL_SEMAPHORE:
             async with self.rate_semaphore:
+                headers = {
+                    'X-Api-Id': self.api_id,
+                    'X-Api-Hash': self.api_hash
+                }
                 search_recipient_params = {'query': username, 'months': 3, 'method': 'searchPremiumGiftRecipient'}
-                async with self.session.post(api_url, data=search_recipient_params) as response:
+                async with self.session.post(api_url, data=search_recipient_params, headers=headers) as response:
                     if response.status == 429:
                         delay = self.base_delay * (2 ** (6 - count))  # Exponential backoff
                         logger.warning(f"Rate limited. Waiting {delay} seconds before retry...")
@@ -63,7 +79,11 @@ class TelegramUsernameChecker:
         """Check username via Telegram web"""
         async with GLOBAL_SEMAPHORE:
             async with self.rate_semaphore:
-                async with self.session.get(f'https://t.me/{username}') as response:
+                headers = {
+                    'X-Api-Id': self.api_id,
+                    'X-Api-Hash': self.api_hash
+                }
+                async with self.session.get(f'https://t.me/{username}', headers=headers) as response:
                     if response.status == 429:
                         delay = self.base_delay * 2  # Simple backoff for Telegram web
                         logger.warning(f"Rate limited by Telegram. Waiting {delay} seconds...")
@@ -85,9 +105,13 @@ class TelegramUsernameChecker:
                     logger.error(f'@{username} 💔 API URL not found')
                     return
 
+                headers = {
+                    'X-Api-Id': self.api_id,
+                    'X-Api-Hash': self.api_hash
+                }
                 search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
                 try:
-                    async with self.session.post(api_url, data=search_auctions) as response:
+                    async with self.session.post(api_url, data=search_auctions, headers=headers) as response:
                         if response.status == 429:
                             delay = self.base_delay * (2 ** (6 - count))  # Exponential backoff
                             logger.warning(f"Rate limited. Waiting {delay} seconds before retry...")
