@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
-from username_checker import check_telegram_username
+from username_checker import check_telegram_username, TelegramUsernameChecker
 from username_store import UsernameStore
 
 # Get token from environment variable with fallback
@@ -46,15 +46,23 @@ async def generate_and_check(base_name: str, method: str) -> list:
     batch_size = 5
     for i in range(0, len(usernames), batch_size):
         batch = usernames[i:i + batch_size]
-        for username in batch:
-            is_available = await check_telegram_username(username)
-            status = "✅ Tersedia" if is_available else "❌ Tidak Tersedia"
-            results.append(f"{username} - {status}")
-            # Store generated username
-            username_store.add_username(base_name, username)
-        # Add small delay between batches
-        if i + batch_size < len(usernames):
-            await asyncio.sleep(2)
+
+        # Create a single checker instance for the batch
+        checker = TelegramUsernameChecker()
+        try:
+            for username in batch:
+                result = await checker.check_fragment_api(username.lower())
+                # Store generated username
+                username_store.add_username(base_name, username)
+                # Don't need to append status since logger.critical already shows it
+                if result is not None:
+                    results.append(username)
+
+            # Add small delay between batches
+            if i + batch_size < len(usernames):
+                await asyncio.sleep(2)
+        finally:
+            await checker.session.close()
 
     return results
 
@@ -122,15 +130,20 @@ async def handle_generation(message: Message):
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
-        # Generate and check usernames
-        results = await generate_and_check(base_name, command)
+        # Generate and check usernames - the logger will automatically display results
+        available_usernames = await generate_and_check(base_name, command)
 
-        # Send results with delay
-        for i, result in enumerate(results, 1):
-            await message.answer(f"{i}. {result}")
-            await asyncio.sleep(1.5)  # Delay between messages
-
-        await warning_msg.edit_text("✅ Generasi username selesai!")
+        if available_usernames:
+            await warning_msg.edit_text(
+                "✅ Generasi username selesai!\n\n"
+                "Username yang mungkin tersedia:\n" +
+                "\n".join(f"@{username}" for username in available_usernames)
+            )
+        else:
+            await warning_msg.edit_text(
+                "✅ Generasi username selesai!\n"
+                "❌ Tidak ditemukan username yang tersedia."
+            )
 
     except Exception as e:
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
