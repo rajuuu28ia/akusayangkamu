@@ -58,9 +58,9 @@ async def generate_and_check(base_name: str, method: str) -> list:
                 if result is not None:
                     results.append(username)
 
-            # Add small delay between batches
+            # Add delay between batches - increased to 3 seconds
             if i + batch_size < len(usernames):
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
         finally:
             await checker.session.close()
 
