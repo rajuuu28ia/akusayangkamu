@@ -1,13 +1,22 @@
 import asyncio
 import os
 import re
+import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message, ChatMemberStatus
+from aiogram.types import Message
+from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
 from username_checker import check_telegram_username, TelegramUsernameChecker
 from username_store import UsernameStore
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Get token from environment variable with fallback
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
@@ -36,10 +45,13 @@ METHODS = {
 async def check_subscription(user_id: int) -> bool:
     """Check if user is subscribed to the channel"""
     try:
+        logger.info(f"Checking subscription for user {user_id}")
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+        is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+        logger.info(f"User {user_id} subscription status: {member.status}, is_member: {is_member}")
+        return is_member
     except Exception as e:
-        print(f"Error checking subscription: {e}")
+        logger.error(f"Error checking subscription for user {user_id}: {str(e)}")
         return False
 
 async def generate_and_check(base_name: str, method: str) -> list:
