@@ -9,6 +9,7 @@ class UsernameStore:
     def __init__(self):
         self._store: Dict[str, Set[Tuple[str, float]]] = {}  # base_name -> set of (generated_name, timestamp)
         self._cleanup_task = None
+        self._completed_generations: Set[str] = set()  # Track completed base_names
 
     def add_username(self, base_name: str, generated_name: str) -> None:
         """Add a generated username with current timestamp"""
@@ -16,6 +17,11 @@ class UsernameStore:
             self._store[base_name] = set()
         self._store[base_name].add((generated_name, time.time()))
         logger.info(f"Stored generated username '{generated_name}' for base name '{base_name}'")
+
+    def mark_generation_complete(self, base_name: str) -> None:
+        """Mark a base_name's generation as complete"""
+        self._completed_generations.add(base_name)
+        logger.info(f"Marked generation complete for base name '{base_name}'")
 
     def is_generated(self, base_name: str, username: str) -> bool:
         """Check if username was previously generated from base_name"""
@@ -28,19 +34,32 @@ class UsernameStore:
         return is_found
 
     def cleanup_old_entries(self) -> None:
-        """Remove entries older than 1 hour"""
+        """Remove entries that are complete and older than 5 minutes"""
         current_time = time.time()
-        hour_ago = current_time - 3600  # 1 hour in seconds
+        five_minutes_ago = current_time - 300  # 5 minutes in seconds
 
         total_removed = 0
         for base_name in list(self._store.keys()):
             # Count entries before cleanup
             before_count = len(self._store[base_name])
 
-            # Filter out old entries
+            # If generation is complete, check time
+            if base_name in self._completed_generations:
+                # Get the most recent timestamp for this base_name
+                latest_timestamp = max(ts for _, ts in self._store[base_name])
+
+                # If the most recent generation was more than 5 minutes ago
+                if latest_timestamp <= five_minutes_ago:
+                    del self._store[base_name]
+                    self._completed_generations.remove(base_name)
+                    logger.info(f"Removed all entries for completed base name '{base_name}' ({before_count} usernames)")
+                    total_removed += before_count
+                    continue
+
+            # For incomplete generations or those within 5 minutes
             current_entries = {
                 (name, ts) for name, ts in self._store[base_name]
-                if ts > hour_ago
+                if ts > five_minutes_ago
             }
 
             if current_entries:
@@ -51,13 +70,16 @@ class UsernameStore:
                     total_removed += removed_count
             else:
                 del self._store[base_name]
+                if base_name in self._completed_generations:
+                    self._completed_generations.remove(base_name)
                 logger.info(f"Removed all entries for base name '{base_name}' ({before_count} usernames)")
                 total_removed += before_count
 
-        logger.info(f"Cleaned up {total_removed} old username entries")
+        if total_removed > 0:
+            logger.info(f"Cleaned up {total_removed} old username entries")
 
     async def start_cleanup_task(self):
         """Start periodic cleanup task"""
         while True:
             self.cleanup_old_entries()
-            await asyncio.sleep(300)  # Run cleanup every 5 minutes
+            await asyncio.sleep(60)  # Run cleanup every minute

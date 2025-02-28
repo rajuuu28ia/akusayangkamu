@@ -43,74 +43,6 @@ user_locks = {}
 # Username store
 username_store = UsernameStore()
 
-# Generation methods mapping
-METHODS = {
-    "ganhur": UsernameGenerator.ganhur,
-    "canon": UsernameGenerator.canon, 
-    "sop": UsernameGenerator.sop,
-    "scanon": UsernameGenerator.scanon,
-    "switch": UsernameGenerator.switch,
-    "kurkuf": UsernameGenerator.kurkuf
-}
-
-async def check_subscription(user_id: int) -> bool:
-    """Check if user is subscribed to the channel"""
-    try:
-        logger.info(f"Checking subscription for user {user_id} in channel {CHANNEL_ID}")
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
-        logger.info(f"User {user_id} subscription status: {member.status}, is_member: {is_member}")
-        return is_member
-    except Exception as e:
-        logger.error(f"Error checking subscription for user {user_id}: {str(e)}")
-        # Try alternative method using invite link
-        try:
-            chat = await bot.get_chat(CHANNEL_ID)
-            logger.info(f"Successfully got chat info: {chat.title}")
-            member = await bot.get_chat_member(chat_id=chat.id, user_id=user_id)
-            is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
-            logger.info(f"Alternative check - User {user_id} status: {member.status}, is_member: {is_member}")
-            return is_member
-        except Exception as e2:
-            logger.error(f"Alternative check failed: {str(e2)}")
-            return False
-
-async def generate_and_check(base_name: str, method: str) -> list:
-    """Generate usernames and check their availability"""
-    generator_func = METHODS[method]
-    all_usernames = generator_func(base_name)
-    results = []
-
-    # Filter out previously generated usernames
-    usernames = [
-        username for username in all_usernames 
-        if not username_store.is_generated(base_name, username)
-    ]
-
-    # Rate limiting - process in smaller batches
-    batch_size = 5
-    for i in range(0, len(usernames), batch_size):
-        batch = usernames[i:i + batch_size]
-
-        # Create a single checker instance for the batch
-        checker = TelegramUsernameChecker()
-        try:
-            for username in batch:
-                result = await checker.check_fragment_api(username.lower())
-                # Store generated username
-                username_store.add_username(base_name, username)
-                # Don't need to append status since logger.critical already shows it
-                if result is not None:
-                    results.append(username)
-
-            # Add delay between batches - increased to 3 seconds
-            if i + batch_size < len(usernames):
-                await asyncio.sleep(3)
-        finally:
-            await checker.session.close()
-
-    return results
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Send a message when the command /start is issued."""
@@ -119,16 +51,12 @@ async def cmd_start(message: Message):
         "⚠️ Untuk menggunakan bot ini:\n"
         f"1️⃣ Join channel kami terlebih dahulu:\n   {CHANNEL_LINK}\n\n"
         "2️⃣ Setelah join, gunakan command berikut:\n"
-        "/ganhur [username] - Substitusi huruf acak\n"
-        "/canon [username] - Tukar huruf i/l\n"
-        "/sop [username] - Tambah karakter acak\n"
-        "/scanon [username] - Tambah 's'\n"
-        "/switch [username] - Tukar karakter bersebelahan\n"
-        "/kurkuf [username] - Hapus karakter acak\n\n"
-        "Contoh: /ganhur username\n\n"
+        "/gen [username] - Generate variasi username\n\n"
+        "Contoh: /gen username\n\n"
         "⚠️ Note:\n"
         "- Username yang sudah di-generate akan disimpan\n"
-        "- Data username akan dihapus otomatis setelah 1 jam"
+        "- Data username akan dihapus otomatis setelah 5 menit\n"
+        "- Harap simpan hasil generate di chat pribadi Anda"
     )
     await message.reply(welcome_msg)
 
@@ -137,8 +65,26 @@ async def help_command(message: Message):
     """Send a message when the command /help is issued."""
     await cmd_start(message)
 
-@dp.message(Command("ganhur", "canon", "sop", "scanon", "switch", "kurkuf"))
-async def handle_generation(message: Message):
+async def generate_all_variants(base_name: str) -> list:
+    """Generate username variants using all available methods"""
+    all_usernames = set()  # Using set to avoid duplicates
+
+    # Generate using all methods
+    all_usernames.update(UsernameGenerator.ganhur(base_name))  # Random letter substitution
+    all_usernames.update(UsernameGenerator.canon(base_name))   # i/l swap
+    all_usernames.update(UsernameGenerator.sop(base_name))     # Add random character
+    all_usernames.update(UsernameGenerator.scanon(base_name))  # Add 's'
+    all_usernames.update(UsernameGenerator.switch(base_name))  # Swap adjacent
+    all_usernames.update(UsernameGenerator.kurkuf(base_name))  # Remove random
+
+    # Convert back to list and filter out already generated usernames
+    return [
+        username for username in all_usernames 
+        if not username_store.is_generated(base_name, username)
+    ]
+
+@dp.message(Command("gen"))
+async def handle_gen(message: Message):
     user_id = message.from_user.id
 
     # Check channel subscription
@@ -157,10 +103,9 @@ async def handle_generation(message: Message):
     # Parse command
     args = message.text.split()
     if len(args) < 2:
-        await message.reply("⚠️ Gunakan format: /command username")
+        await message.reply("⚠️ Gunakan format: /gen username")
         return
 
-    command = args[0][1:]  # Remove the '/' prefix
     base_name = args[1].lower()
 
     # Validate username
@@ -183,25 +128,55 @@ async def handle_generation(message: Message):
             "⚠️ <b>Peringatan</b>\n"
             "- Username yang sudah di-generate akan disimpan\n"
             "- Username tersimpan tidak akan muncul lagi dalam hasil generate\n"
-            "- Data username akan dihapus otomatis setelah 1 jam\n\n"
-            f"🔄 Generating '{command}' dari '{base_name}'...\n"
+            "- Data username akan dihapus otomatis setelah 5 menit\n"
+            "- Harap simpan hasil generate di chat pribadi Anda\n\n"
+            f"🔄 Generating variasi untuk '{base_name}'...\n"
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
-        # Generate and check usernames - the logger will automatically display results
-        available_usernames = await generate_and_check(base_name, command)
+        # Generate usernames using all methods and check availability
+        all_variants = await generate_all_variants(base_name)
+        available_usernames = []
+
+        # Check availability in batches
+        batch_size = 5
+        for i in range(0, len(all_variants), batch_size):
+            batch = all_variants[i:i + batch_size]
+
+            # Create a single checker instance for the batch
+            checker = TelegramUsernameChecker()
+            try:
+                for username in batch:
+                    result = await checker.check_fragment_api(username.lower())
+                    # Store generated username
+                    username_store.add_username(base_name, username)
+                    if result is not None:
+                        available_usernames.append(username)
+
+                # Add delay between batches
+                if i + batch_size < len(all_variants):
+                    await asyncio.sleep(3)
+            finally:
+                await checker.session.close()
 
         if available_usernames:
             await warning_msg.edit_text(
                 "✅ Generasi username selesai!\n\n"
                 "Username yang mungkin tersedia:\n" +
-                "\n".join(f"@{username}" for username in available_usernames)
+                "\n".join(f"@{username}" for username in available_usernames) +
+                "\n\n⚠️ PENTING: Harap simpan username ini dalam chat pribadi Anda!\n"
+                "Bot akan menghapus data ini dalam 5 menit."
             )
         else:
             await warning_msg.edit_text(
                 "✅ Generasi username selesai!\n"
-                "❌ Tidak ditemukan username yang tersedia."
+                "❌ Tidak ditemukan username yang tersedia.\n\n"
+                "⚠️ Data pencarian ini akan dihapus dalam 5 menit."
             )
+
+        # Mark generation as complete after showing results
+        username_store.mark_generation_complete(base_name)
+        logger.info(f"Generation complete for base name '{base_name}', data will be cleaned up in 5 minutes")
 
     except Exception as e:
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
@@ -210,6 +185,28 @@ async def handle_generation(message: Message):
         # Always unlock user
         if user_id in user_locks:
             del user_locks[user_id]
+
+async def check_subscription(user_id: int) -> bool:
+    """Check if user is subscribed to the channel"""
+    try:
+        logger.info(f"Checking subscription for user {user_id} in channel {CHANNEL_ID}")
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+        logger.info(f"User {user_id} subscription status: {member.status}, is_member: {is_member}")
+        return is_member
+    except Exception as e:
+        logger.error(f"Error checking subscription for user {user_id}: {str(e)}")
+        # Try alternative method using invite link
+        try:
+            chat = await bot.get_chat(CHANNEL_ID)
+            logger.info(f"Successfully got chat info: {chat.title}")
+            member = await bot.get_chat_member(chat_id=chat.id, user_id=user_id)
+            is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+            logger.info(f"Alternative check - User {user_id} status: {member.status}, is_member: {is_member}")
+            return is_member
+        except Exception as e2:
+            logger.error(f"Alternative check failed: {str(e2)}")
+            return False
 
 async def main():
     # Start username cleanup task
