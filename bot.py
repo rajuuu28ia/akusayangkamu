@@ -31,9 +31,10 @@ CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
 
 # Message when user is not subscribed
 SUBSCRIBE_MESSAGE = (
-    "⚠️ Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
-    f"{CHANNEL_LINK}\n\n"
-    "Setelah join, silakan coba command kembali."
+    "⚠️ <b>Perhatian!</b> ⚠️\n\n"
+    "Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
+    f"🔗 {CHANNEL_LINK}\n\n"
+    "📝 Setelah join, silakan coba command kembali."
 )
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -61,16 +62,17 @@ def run_flask():
 async def cmd_start(message: Message):
     """Send a message when the command /start is issued."""
     welcome_msg = (
-        "👋 Selamat datang di Bot Generator Username Telegram!\n\n"
-        "⚠️ Untuk menggunakan bot ini:\n"
-        f"1️⃣ Join channel kami terlebih dahulu:\n   {CHANNEL_LINK}\n\n"
-        "2️⃣ Setelah join, gunakan command berikut:\n"
-        "/gen [username] - Generate variasi username\n\n"
-        "Contoh: /gen username\n\n"
-        "⚠️ Note:\n"
-        "- Username yang sudah di-generate akan disimpan\n"
-        "- Data username akan dihapus otomatis setelah 5 menit\n"
-        "- Harap simpan hasil generate di chat pribadi Anda"
+        "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
+        "📋 <b>Cara Penggunaan:</b>\n"
+        f"1️⃣ Join channel kami:\n   🔗 {CHANNEL_LINK}\n\n"
+        "2️⃣ Gunakan command:\n"
+        "   📝 <code>/gen [username]</code> - Generate variasi username\n\n"
+        "📱 <b>Contoh:</b>\n"
+        "   <code>/gen username</code>\n\n"
+        "⚠️ <b>Penting:</b>\n"
+        "• 📋 Username yang sudah di-generate akan disimpan\n"
+        "• ⏳ Data username akan dihapus otomatis setelah 5 menit\n"
+        "• 💾 Harap simpan hasil generate di chat pribadi Anda"
     )
     await message.reply(welcome_msg)
 
@@ -139,12 +141,13 @@ async def handle_gen(message: Message):
     try:
         # Send warning message
         warning_msg = await message.reply(
-            "⚠️ <b>Peringatan</b>\n"
-            "- Username yang sudah di-generate akan disimpan\n"
-            "- Username tersimpan tidak akan muncul lagi dalam hasil generate\n"
-            "- Data username akan dihapus otomatis setelah 5 menit\n"
-            "- Harap simpan hasil generate di chat pribadi Anda\n\n"
-            f"🔄 Generating variasi untuk '{base_name}'...\n"
+            "⚠️ <b>Informasi Penting</b> ⚠️\n\n"
+            "📋 <b>Perhatikan:</b>\n"
+            "• Username yang sudah di-generate akan disimpan\n"
+            "• Username tersimpan tidak akan muncul lagi\n"
+            "• Data akan terhapus otomatis setelah 5 menit\n"
+            "• Simpan hasil generate di chat pribadi Anda\n\n"
+            f"🔄 <b>Sedang memproses:</b> '{base_name}'\n"
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
@@ -175,17 +178,22 @@ async def handle_gen(message: Message):
 
         if available_usernames:
             await warning_msg.edit_text(
-                "✅ Generasi username selesai!\n\n"
-                "Username yang mungkin tersedia:\n" +
-                "\n".join(f"@{username}" for username in available_usernames) +
-                "\n\n⚠️ PENTING: Harap simpan username ini dalam chat pribadi Anda!\n"
-                "Bot akan menghapus data ini dalam 5 menit."
+                "✅ <b>Generasi Username Selesai!</b>\n\n"
+                "🎯 <b>Username yang mungkin tersedia:</b>\n" +
+                "\n".join(f"• <code>@{username}</code>" for username in available_usernames) +
+                "\n\n"
+                "⚠️ <b>PENTING:</b>\n"
+                "• 💾 Harap simpan username ini di chat pribadi\n"
+                "• ⏳ Bot akan menghapus data dalam 5 menit\n"
+                "• 🔄 Gunakan username segera sebelum diambil orang lain"
             )
         else:
             await warning_msg.edit_text(
-                "✅ Generasi username selesai!\n"
+                "✅ <b>Generasi Username Selesai</b>\n\n"
                 "❌ Tidak ditemukan username yang tersedia.\n\n"
-                "⚠️ Data pencarian ini akan dihapus dalam 5 menit."
+                "ℹ️ <b>Informasi:</b>\n"
+                "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
+                "• 🔄 Silakan coba username lain"
             )
 
         # Mark generation as complete after showing results
