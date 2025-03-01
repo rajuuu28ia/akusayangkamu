@@ -10,6 +10,8 @@ from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
 from username_checker import check_telegram_username, TelegramUsernameChecker
 from username_store import UsernameStore
+from flask import Flask
+from threading import Thread
 
 # Configure logging
 logging.basicConfig(
@@ -42,6 +44,18 @@ user_locks = {}
 
 # Username store
 username_store = UsernameStore()
+
+# Flask app untuk keep-alive
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    """Endpoint untuk UptimeRobot"""
+    return "Bot is alive!"
+
+def run_flask():
+    """Run Flask in a separate thread"""
+    app.run(host='0.0.0.0', port=5000)
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -211,6 +225,10 @@ async def check_subscription(user_id: int) -> bool:
 async def main():
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
+
+    # Start Flask in a separate thread
+    Thread(target=run_flask, daemon=True).start()
+    logger.info("✅ Flask server is running...")
 
     logger.info("✅ Bot is running...")
     await dp.start_polling(bot)
