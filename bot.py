@@ -66,7 +66,8 @@ async def cmd_start(message: Message):
         "📋 <b>Cara Penggunaan:</b>\n"
         f"1️⃣ Join channel kami:\n   🔗 {CHANNEL_LINK}\n\n"
         "2️⃣ Gunakan command:\n"
-        "   📝 <code>/gen [username]</code> - Generate variasi username\n\n"
+        "   📝 <code>/gen [username]</code> - Generate variasi username\n"
+        "   📝 <code>/allusn [username]</code> - Generate all username variations\n\n"
         "📱 <b>Contoh:</b>\n"
         "   <code>/gen username</code>\n\n"
         "⚠️ <b>Penting:</b>\n"
@@ -125,8 +126,8 @@ async def handle_gen(message: Message):
     base_name = args[1].lower()
 
     # Validate username
-    if len(base_name) < 5:
-        await message.reply("⚠️ Username terlalu pendek! Minimal 5 karakter.")
+    if len(base_name) < 4:  # Changed from 5 to 4
+        await message.reply("⚠️ Username terlalu pendek! Minimal 4 karakter.")
         return
     elif len(base_name) > 32:
         await message.reply("⚠️ Username terlalu panjang! Maksimal 32 karakter.")
@@ -240,6 +241,145 @@ async def main():
 
     logger.info("✅ Bot is running...")
     await dp.start_polling(bot)
+
+@dp.message(Command("allusn"))
+async def handle_allusn(message: Message):
+    user_id = message.from_user.id
+
+    # Check channel subscription
+    if not await check_subscription(user_id):
+        logger.warning(f"User {user_id} tried to use bot without joining channel")
+        await message.reply(SUBSCRIBE_MESSAGE)
+        return
+
+    # Check if user is locked
+    if user_id in user_locks:
+        await message.reply("⚠️ Tunggu proses sebelumnya selesai dulu!")
+        return
+
+    # Parse command
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply("⚠️ Gunakan format: /allusn username")
+        return
+
+    base_name = args[1].lower()
+
+    # Validate username
+    if len(base_name) < 4:  # Changed from 5 to 4
+        await message.reply("⚠️ Username terlalu pendek! Minimal 4 karakter.")
+        return
+    elif len(base_name) > 32:
+        await message.reply("⚠️ Username terlalu panjang! Maksimal 32 karakter.")
+        return
+    elif not re.match(r'^[a-zA-Z0-9_]+$', base_name):
+        await message.reply("⚠️ Username hanya boleh mengandung huruf, angka, dan underscore.")
+        return
+
+    # Lock user
+    user_locks[user_id] = True
+
+    try:
+        # Send processing message
+        processing_msg = await message.reply(
+            "⚠️ <b>Informasi Penting</b> ⚠️\n\n"
+            "📋 <b>Perhatikan:</b>\n"
+            "• Username yang sudah di-generate akan disimpan\n"
+            "• Username tersimpan tidak akan muncul lagi\n"
+            "• Data akan terhapus otomatis setelah 5 menit\n"
+            "• Simpan hasil generate di chat pribadi Anda\n\n"
+            f"🔄 <b>Sedang memproses:</b> '{base_name}'\n"
+            "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
+        )
+
+        # Generate all variations in new priority order
+        all_variants = []
+        all_variants.append(base_name)  # OP first
+        all_variants.extend(UsernameGenerator.sop(base_name))  # SOP second
+        all_variants.extend(UsernameGenerator.canon(base_name))  # Canon/Scanon third
+        all_variants.extend(UsernameGenerator.scanon(base_name))
+        all_variants.extend(UsernameGenerator.tamhur(base_name))  # Tamhur fourth
+        all_variants.extend(UsernameGenerator.ganhur(base_name))  # Ganhur/Switch fifth
+        all_variants.extend(UsernameGenerator.switch(base_name))
+        all_variants.extend(UsernameGenerator.kurkuf(base_name))  # Kurhuf last
+
+        # Remove duplicates while preserving order
+        all_variants = list(dict.fromkeys(all_variants))
+
+        # Check availability
+        available_usernames = {
+            "op": [],
+            "sop": [],
+            "canon_scanon": [],  # Combined Canon/Scanon
+            "tamhur": [],
+            "ganhur_switch": [],  # Combined Ganhur/Switch
+            "kurhuf": []
+        }
+
+        # Create a single checker instance
+        checker = TelegramUsernameChecker()
+        try:
+            for username in all_variants:
+                result = await checker.check_fragment_api(username.lower())
+                if result is not None:
+                    # Categorize by type with new priorities
+                    if username == base_name:
+                        available_usernames["op"].append(username)
+                    elif username in UsernameGenerator.sop(base_name):
+                        available_usernames["sop"].append(username)
+                    elif username in UsernameGenerator.canon(base_name) or username in UsernameGenerator.scanon(base_name):
+                        available_usernames["canon_scanon"].append(username)
+                    elif username in UsernameGenerator.tamhur(base_name):
+                        available_usernames["tamhur"].append(username)
+                    elif username in UsernameGenerator.ganhur(base_name) or username in UsernameGenerator.switch(base_name):
+                        available_usernames["ganhur_switch"].append(username)
+                    elif username in UsernameGenerator.kurkuf(base_name):
+                        available_usernames["kurhuf"].append(username)
+        finally:
+            await checker.session.close()
+
+        # Format results by category with new priorities
+        result_text = "✅ <b>Hasil Generate Username</b>\n\n"
+        categories = {
+            "op": "👑 <b>On Point</b>",
+            "sop": "💫 <b>Semi On Point</b>",
+            "canon_scanon": "🔄 <b>Canon & Scanon</b>",
+            "tamhur": "💎 <b>Tambah Huruf</b>",
+            "ganhur_switch": "📝 <b>Ganti & Switch</b>",
+            "kurhuf": "✂️ <b>Kurang Huruf</b>"
+        }
+
+        found_any = False
+        for category, usernames in available_usernames.items():
+            if usernames:
+                found_any = True
+                result_text += f"{categories[category]}:\n"
+                for username in usernames[:3]:  # Limit to 3 per category
+                    result_text += f"• <code>@{username}</code>\n"
+                result_text += "\n"
+
+        if found_any:
+            result_text += "\n⚠️ <b>PENTING:</b>\n"
+            result_text += "• 💾 Simpan username di chat pribadi\n"
+            result_text += "• ⏳ Data akan dihapus dalam 5 menit\n"
+            result_text += "• 🔄 Gunakan username segera sebelum diambil orang lain"
+        else:
+            result_text = "❌ <b>Tidak ditemukan username yang tersedia</b>\n\n"
+            result_text += "ℹ️ <b>Info:</b>\n"
+            result_text += "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
+            result_text += "• 🔄 Silakan coba username lain"
+
+        await processing_msg.edit_text(result_text)
+        username_store.mark_generation_complete(base_name)
+
+    except Exception as e:
+        await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
+
+    finally:
+        # Always unlock user
+        if user_id in user_locks:
+            del user_locks[user_id]
+
 
 if __name__ == "__main__":
     asyncio.run(main())
