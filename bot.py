@@ -26,18 +26,12 @@ from aiogram.types import Message
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
-from username_checker import check_telegram_username, TelegramUsernameChecker
+from username_checker import TelegramUsernameChecker
 from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
-# Configure logging (Replaced by the above)
-# logging.basicConfig(
-#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-# )
-# logger = logging.getLogger(__name__)
-
-# Get token from environment variable with fallback
+# Configure base settings
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
@@ -55,6 +49,7 @@ SUBSCRIBE_MESSAGE = (
     "📝 Setelah join, silakan coba command kembali."
 )
 
+# Initialize bot and dispatcher
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -138,7 +133,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
                 # Create tasks for each username in batch
                 for username in batch:
-                    task = asyncio.create_task(checker.check_fragment_api(username.lower()))
+                    task = asyncio.create_task(checker.check_username(username.lower()))
                     tasks.append((username, task))
 
                 # Wait for current batch to complete with timeout
@@ -186,6 +181,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
 @dp.message(Command("gen"))
 async def handle_gen(message: Message):
+    """Handle the /gen command with improved concurrency and rate limiting"""
     user_id = message.from_user.id
 
     # Check channel subscription
@@ -193,8 +189,6 @@ async def handle_gen(message: Message):
         logger.warning(f"User {user_id} tried to use bot without joining channel")
         await message.reply(SUBSCRIBE_MESSAGE)
         return
-
-    logger.info(f"User {user_id} verified as channel member, processing command: {message.text}")
 
     # Check if user is locked
     if user_id in user_locks:
@@ -210,7 +204,7 @@ async def handle_gen(message: Message):
     base_name = args[1].lower()
 
     # Validate username
-    if len(base_name) < 4:  # Changed from 5 to 4
+    if len(base_name) < 4:
         await message.reply("⚠️ Username terlalu pendek! Minimal 4 karakter.")
         return
     elif len(base_name) > 32:
@@ -224,8 +218,8 @@ async def handle_gen(message: Message):
     user_locks[user_id] = True
 
     try:
-        # Send warning message
-        warning_msg = await message.reply(
+        # Send initial message
+        status_message = await message.reply(
             "⚠️ <b>Informasi Penting</b> ⚠️\n\n"
             "📋 <b>Perhatikan:</b>\n"
             "• Username yang sudah di-generate akan disimpan\n"
@@ -236,48 +230,47 @@ async def handle_gen(message: Message):
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
-        # Generate usernames using all methods and check availability
-        all_variants = await generate_all_variants(base_name)
-        available_usernames = []
+        # Generate username variants
+        variants = await generate_all_variants(base_name)
 
-        # Create single checker instance for all checks
+        # Create checker instance
         checker = TelegramUsernameChecker()
         try:
-            # Check availability in optimized batches
-            results = await batch_check_usernames(checker, all_variants)
+            # Process username batches
+            results = await batch_check_usernames(checker, variants)
 
-            # Process results
+            # Get available usernames
             available_usernames = [username for username, is_available in results.items() if is_available]
 
             if available_usernames:
-                await warning_msg.edit_text(
+                # Format results with improved presentation
+                result_msg = (
                     "✅ <b>Generasi Username Selesai!</b>\n\n"
                     "🎯 <b>Username yang mungkin tersedia:</b>\n" +
-                    "\n".join(f"• <code>@{username}</code>" for username in available_usernames) +
-                    "\n\n"
-                    "⚠️ <b>PENTING:</b>\n"
+                    "\n".join(f"• <code>@{username}</code>" for username in available_usernames[:10]) +
+                    "\n\n⚠️ <b>PENTING:</b>\n"
                     "• 💾 Harap simpan username ini di chat pribadi\n"
                     "• ⏳ Bot akan menghapus data dalam 5 menit\n"
                     "• 🔄 Gunakan username segera sebelum diambil orang lain"
                 )
             else:
-                await warning_msg.edit_text(
+                result_msg = (
                     "✅ <b>Generasi Username Selesai</b>\n\n"
                     "❌ Tidak ditemukan username yang tersedia.\n\n"
-                    "ℹ️ <b>Informasi:</b>\n"
-                    "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
-                    "• 🔄 Silakan coba username lain"
+                    "ℹ️ <b>Saran:</b>\n"
+                    "• 🔄 Coba username lain\n"
+                    "• 📝 Gunakan kombinasi huruf dan angka yang berbeda"
                 )
 
-            # Mark generation as complete after showing results
+            await status_message.edit_text(result_msg)
             username_store.mark_generation_complete(base_name)
-            logger.info(f"Generation complete for base name '{base_name}', data will be cleaned up in 5 minutes")
 
         finally:
-            await checker.session.close()
+            await checker.close()
 
     except Exception as e:
-        await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
+        logger.error(f"Error in handle_gen: {str(e)}")
+        await message.reply("❌ Terjadi kesalahan. Silakan coba lagi nanti.")
 
     finally:
         # Always unlock user
@@ -285,37 +278,38 @@ async def handle_gen(message: Message):
             del user_locks[user_id]
 
 async def check_subscription(user_id: int) -> bool:
-    """Check if user is subscribed to the channel"""
+    """Check if user is subscribed to the channel with improved error handling"""
     try:
-        logger.info(f"Checking subscription for user {user_id} in channel {CHANNEL_ID}")
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
-        logger.info(f"User {user_id} subscription status: {member.status}, is_member: {is_member}")
-        return is_member
+        return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
     except Exception as e:
-        logger.error(f"Error checking subscription for user {user_id}: {str(e)}")
-        # Try alternative method using invite link
+        logger.error(f"Error checking subscription: {str(e)}")
         try:
+            # Fallback method
             chat = await bot.get_chat(CHANNEL_ID)
-            logger.info(f"Successfully got chat info: {chat.title}")
             member = await bot.get_chat_member(chat_id=chat.id, user_id=user_id)
-            is_member = member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
-            logger.info(f"Alternative check - User {user_id} status: {member.status}, is_member: {is_member}")
-            return is_member
+            return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
         except Exception as e2:
-            logger.error(f"Alternative check failed: {str(e2)}")
+            logger.error(f"Fallback subscription check failed: {str(e2)}")
             return False
 
 async def main():
-    # Start username cleanup task
-    asyncio.create_task(username_store.start_cleanup_task())
+    """Start the bot with improved initialization"""
+    try:
+        # Start username cleanup task
+        asyncio.create_task(username_store.start_cleanup_task())
 
-    # Start Flask in a separate thread
-    Thread(target=run_flask, daemon=True).start()
-    logger.info("✅ Flask server is running...")
+        # Start Flask in a separate thread
+        Thread(target=run_flask, daemon=True).start()
+        logger.info("✅ Flask server is running...")
 
-    logger.info("✅ Bot is running...")
-    await dp.start_polling(bot)
+        # Start bot
+        logger.info("✅ Bot is starting...")
+        await dp.start_polling(bot)
+
+    except Exception as e:
+        logger.error(f"Error in main: {str(e)}")
+        raise
 
 @dp.message(Command("allusn"))
 async def handle_allusn(message: Message):
@@ -450,7 +444,7 @@ async def handle_allusn(message: Message):
             username_store.mark_generation_complete(base_name)
 
         finally:
-            await checker.session.close()
+            await checker.close()
 
     except Exception as e:
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
