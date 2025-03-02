@@ -113,7 +113,7 @@ async def generate_all_variants(base_name: str) -> list:
         if not username_store.is_generated(base_name, username)
     ]
 
-async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=5) -> dict:
+async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=8) -> dict:
     """Check a batch of usernames concurrently with improved monitoring and timeout"""
     results = {}
     tasks = []
@@ -125,7 +125,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
     try:
         # Add timeout for entire batch operation
-        async with asyncio.timeout(120):  # 2 minute total timeout
+        async with asyncio.timeout(180):  # 3 minute total timeout, increased from 2
             for i in range(0, len(usernames), batch_size):
                 current_batch += 1
                 batch = usernames[i:i + batch_size]

@@ -41,9 +41,11 @@ class RateLimiter:
 class TelegramUsernameChecker:
     def __init__(self):
         self.session = None
-        self.rate_limiter = RateLimiter(rate_limit=25, time_window=60)
+        self.rate_limiter = RateLimiter(rate_limit=30, time_window=60)  # Increased rate limit
         self._cache = {}
         self._cache_ttl = 300  # 5 minutes
+        self._backoff_factor = 1.5  # For exponential backoff
+        self._max_retries = 3  # Maximum number of retries
 
         # Get API credentials from environment
         self.api_id = os.getenv("TELEGRAM_API_ID")
@@ -54,7 +56,8 @@ class TelegramUsernameChecker:
 
     async def _init_session(self):
         if self.session is None:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=20, connect=10)  # Adjusted timeouts
+            self.session = aiohttp.ClientSession(timeout=timeout)
 
     async def close(self):
         if self.session:
@@ -74,25 +77,42 @@ class TelegramUsernameChecker:
         """Cache username check result"""
         self._cache[username] = (result, time.time())
 
+    async def _make_request(self, method: str, url: str, **kwargs):
+        """Make HTTP request with retry logic"""
+        for retry in range(self._max_retries):
+            try:
+                await self.rate_limiter.acquire()
+                async with self.session.request(method, url, **kwargs) as response:
+                    if response.status == 429:  # Rate limited
+                        wait_time = self._backoff_factor ** retry
+                        logger.warning(f"Rate limited. Waiting {wait_time:.1f}s before retry...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    return response
+            except asyncio.TimeoutError:
+                if retry < self._max_retries - 1:
+                    wait_time = self._backoff_factor ** retry
+                    logger.warning(f"Timeout. Retrying in {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise
+        return None
+
     async def get_api_url(self):
         await self._init_session()
-        await self.rate_limiter.acquire()
-
         try:
-            async with self.session.get('https://fragment.com') as response:
-                if response.status == 429:
-                    logger.warning("Rate limited by Fragment API. Waiting...")
-                    await asyncio.sleep(5)
-                    return await self.get_api_url()
+            response = await self._make_request('GET', 'https://fragment.com')
+            if not response:
+                return None
 
-                text = await response.text()
-                tree = html.fromstring(text)
-                scripts = tree.xpath('//script/text()')
-                pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
-                script = next((script for script in scripts if pattern.search(script)), None)
-                if script:
-                    api_url = f'https://fragment.com{json.loads(pattern.search(script).group(1)).get("apiUrl")}'
-                    return api_url
+            text = await response.text()
+            tree = html.fromstring(text)
+            scripts = tree.xpath('//script/text()')
+            pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
+            script = next((script for script in scripts if pattern.search(script)), None)
+            if script:
+                api_url = f'https://fragment.com{json.loads(pattern.search(script).group(1)).get("apiUrl")}'
+                return api_url
         except Exception as e:
             logger.error(f"Error getting API URL: {e}")
         return None
@@ -116,7 +136,6 @@ class TelegramUsernameChecker:
 
         try:
             await self._init_session()
-            await self.rate_limiter.acquire()
 
             api_url = await self.get_api_url()
             if not api_url:
@@ -129,43 +148,42 @@ class TelegramUsernameChecker:
                 'type': 'usernames'
             }
 
-            async with self.session.post(api_url, data=params) as response:
-                if response.status == 429:
-                    logger.warning(f"Rate limited checking @{username}. Retrying...")
-                    await asyncio.sleep(5)
-                    return await self.check_username(username)
-
-                data = await response.json()
-
-                if isinstance(data, dict) and data.get('html'):
-                    tree = html.fromstring(data['html'])
-                    values = tree.xpath('//div[contains(@class, "tm-value")]/text()')
-
-                    if len(values) >= 3:
-                        username_tag, price, status = values[:3]
-
-                        if price.isdigit():
-                            logger.info(f"@{username} is for sale: {price}💎")
-                            return False
-
-                        if status == 'Unavailable':
-                            # Double check with web
-                            async with self.session.get(f'https://t.me/{username}') as web_response:
-                                text = await web_response.text()
-                                if f"You can contact @{username} right away." not in text:
-                                    logger.info(f"✅ @{username} might be available")
-                                    self._set_cache(username, True)
-                                    return True
-
-                logger.info(f"❌ @{username} is taken or unavailable")
-                self._set_cache(username, False)
+            response = await self._make_request('POST', api_url, data=params)
+            if not response:
                 return False
+
+            data = await response.json()
+
+            if isinstance(data, dict) and data.get('html'):
+                tree = html.fromstring(data['html'])
+                values = tree.xpath('//div[contains(@class, "tm-value")]/text()')
+
+                if len(values) >= 3:
+                    username_tag, price, status = values[:3]
+
+                    if price.isdigit():
+                        logger.info(f"@{username} is for sale: {price}💎")
+                        return False
+
+                    if status == 'Unavailable':
+                        # Double check with web
+                        web_response = await self._make_request('GET', f'https://t.me/{username}')
+                        if web_response:
+                            text = await web_response.text()
+                            if f"You can contact @{username} right away." not in text:
+                                logger.info(f"✅ @{username} might be available")
+                                self._set_cache(username, True)
+                                return True
+
+            logger.info(f"❌ @{username} is taken or unavailable")
+            self._set_cache(username, False)
+            return False
 
         except Exception as e:
             logger.error(f"Error checking @{username}: {e}")
             return False
 
-    async def batch_check(self, usernames: list, batch_size: int = 5) -> list:
+    async def batch_check(self, usernames: list, batch_size: int = 8) -> list:
         """Check multiple usernames concurrently in batches"""
         results = []
         for i in range(0, len(usernames), batch_size):
@@ -182,11 +200,15 @@ class TelegramUsernameChecker:
                     results.append(result)
 
             # Small delay between batches to prevent overwhelming
-            await asyncio.sleep(1)
+            if i + batch_size < len(usernames):
+                await asyncio.sleep(0.3)  # Reduced delay between batches
 
         return results
 
 async def check_usernames(usernames: list) -> list:
     """Helper function to check multiple usernames"""
-    async with TelegramUsernameChecker() as checker:
+    checker = TelegramUsernameChecker()
+    try:
         return await checker.batch_check(usernames)
+    finally:
+        await checker.close()
