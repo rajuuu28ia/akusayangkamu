@@ -1,7 +1,25 @@
+import logging.handlers
+import sys
+
+# Update logging configuration at the start of the file
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.handlers.RotatingFileHandler(
+            'bot.log',
+            maxBytes=10000000,
+            backupCount=5
+        )
+    ]
+)
+logger = logging.getLogger(__name__)
+
 import asyncio
-import logging
 import os
 import re
+import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -13,11 +31,11 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Configure logging (Replaced by the above)
+# logging.basicConfig(
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+# )
+# logger = logging.getLogger(__name__)
 
 # Get token from environment variable with fallback
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -100,6 +118,72 @@ async def generate_all_variants(base_name: str) -> list:
         if not username_store.is_generated(base_name, username)
     ]
 
+async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=5) -> dict:
+    """Check a batch of usernames concurrently with improved monitoring and timeout"""
+    results = {}
+    tasks = []
+    total_batches = (len(usernames) + batch_size - 1) // batch_size
+    current_batch = 0
+
+    logger.info(f"Starting batch check for {len(usernames)} usernames in {total_batches} batches")
+    batch_start_time = time.time()
+
+    try:
+        # Add timeout for entire batch operation
+        async with asyncio.timeout(120):  # 2 minute total timeout
+            for i in range(0, len(usernames), batch_size):
+                current_batch += 1
+                batch = usernames[i:i + batch_size]
+                logger.info(f"Processing batch {current_batch}/{total_batches} with {len(batch)} usernames")
+
+                # Create tasks for each username in batch
+                for username in batch:
+                    task = asyncio.create_task(checker.check_fragment_api(username.lower()))
+                    tasks.append((username, task))
+
+                # Wait for current batch to complete with timeout
+                try:
+                    async with asyncio.timeout(30):  # 30 second timeout per batch
+                        batch_results = []
+                        for username, task in tasks:
+                            try:
+                                result = await task
+                                if result is not None:
+                                    results[username] = result
+                                    batch_results.append(username)
+                            except Exception as e:
+                                logger.error(f"Error checking username {username}: {str(e)}")
+
+                        tasks = []  # Clear tasks for next batch
+
+                        # Log batch completion
+                        logger.info(f"Batch {current_batch}/{total_batches} completed. Found {len(batch_results)} available usernames")
+
+                        # Small delay between batches to avoid rate limits
+                        if i + batch_size < len(usernames):
+                            delay = 0.5  # Reduced delay between batches
+                            logger.info(f"Waiting {delay}s before next batch...")
+                            await asyncio.sleep(delay)
+
+                except asyncio.TimeoutError:
+                    logger.error(f"Timeout processing batch {current_batch}")
+                    # Cancel remaining tasks in current batch
+                    for _, task in tasks:
+                        task.cancel()
+                    tasks = []
+                    continue  # Move to next batch
+
+    except asyncio.TimeoutError:
+        logger.error("Global timeout in batch processing")
+    finally:
+        # Cancel any remaining tasks
+        for _, task in tasks:
+            task.cancel()
+
+        total_time = time.time() - batch_start_time
+        logger.info(f"All batches completed in {total_time:.2f}s. Found {len(results)} available usernames")
+        return results
+
 @dp.message(Command("gen"))
 async def handle_gen(message: Message):
     user_id = message.from_user.id
@@ -156,50 +240,41 @@ async def handle_gen(message: Message):
         all_variants = await generate_all_variants(base_name)
         available_usernames = []
 
-        # Check availability in batches
-        batch_size = 5
-        for i in range(0, len(all_variants), batch_size):
-            batch = all_variants[i:i + batch_size]
+        # Create single checker instance for all checks
+        checker = TelegramUsernameChecker()
+        try:
+            # Check availability in optimized batches
+            results = await batch_check_usernames(checker, all_variants)
 
-            # Create a single checker instance for the batch
-            checker = TelegramUsernameChecker()
-            try:
-                for username in batch:
-                    result = await checker.check_fragment_api(username.lower())
-                    # Store generated username
-                    username_store.add_username(base_name, username)
-                    if result is not None:
-                        available_usernames.append(username)
+            # Process results
+            available_usernames = [username for username, is_available in results.items() if is_available]
 
-                # Add delay between batches
-                if i + batch_size < len(all_variants):
-                    await asyncio.sleep(3)
-            finally:
-                await checker.session.close()
+            if available_usernames:
+                await warning_msg.edit_text(
+                    "✅ <b>Generasi Username Selesai!</b>\n\n"
+                    "🎯 <b>Username yang mungkin tersedia:</b>\n" +
+                    "\n".join(f"• <code>@{username}</code>" for username in available_usernames) +
+                    "\n\n"
+                    "⚠️ <b>PENTING:</b>\n"
+                    "• 💾 Harap simpan username ini di chat pribadi\n"
+                    "• ⏳ Bot akan menghapus data dalam 5 menit\n"
+                    "• 🔄 Gunakan username segera sebelum diambil orang lain"
+                )
+            else:
+                await warning_msg.edit_text(
+                    "✅ <b>Generasi Username Selesai</b>\n\n"
+                    "❌ Tidak ditemukan username yang tersedia.\n\n"
+                    "ℹ️ <b>Informasi:</b>\n"
+                    "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
+                    "• 🔄 Silakan coba username lain"
+                )
 
-        if available_usernames:
-            await warning_msg.edit_text(
-                "✅ <b>Generasi Username Selesai!</b>\n\n"
-                "🎯 <b>Username yang mungkin tersedia:</b>\n" +
-                "\n".join(f"• <code>@{username}</code>" for username in available_usernames) +
-                "\n\n"
-                "⚠️ <b>PENTING:</b>\n"
-                "• 💾 Harap simpan username ini di chat pribadi\n"
-                "• ⏳ Bot akan menghapus data dalam 5 menit\n"
-                "• 🔄 Gunakan username segera sebelum diambil orang lain"
-            )
-        else:
-            await warning_msg.edit_text(
-                "✅ <b>Generasi Username Selesai</b>\n\n"
-                "❌ Tidak ditemukan username yang tersedia.\n\n"
-                "ℹ️ <b>Informasi:</b>\n"
-                "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
-                "• 🔄 Silakan coba username lain"
-            )
+            # Mark generation as complete after showing results
+            username_store.mark_generation_complete(base_name)
+            logger.info(f"Generation complete for base name '{base_name}', data will be cleaned up in 5 minutes")
 
-        # Mark generation as complete after showing results
-        username_store.mark_generation_complete(base_name)
-        logger.info(f"Generation complete for base name '{base_name}', data will be cleaned up in 5 minutes")
+        finally:
+            await checker.session.close()
 
     except Exception as e:
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
@@ -292,7 +367,7 @@ async def handle_allusn(message: Message):
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
-        # Generate all variations in new priority order
+        # Generate all variations in prioritized order
         all_variants = []
         all_variants.append(base_name)  # OP first
         all_variants.extend(UsernameGenerator.sop(base_name))  # SOP second
@@ -306,71 +381,76 @@ async def handle_allusn(message: Message):
         # Remove duplicates while preserving order
         all_variants = list(dict.fromkeys(all_variants))
 
-        # Check availability
+        # Initialize result categories
         available_usernames = {
             "op": [],
             "sop": [],
-            "canon_scanon": [],  # Combined Canon/Scanon
+            "canon_scanon": [],
             "tamhur": [],
-            "ganhur_switch": [],  # Combined Ganhur/Switch
+            "ganhur_switch": [],
             "kurhuf": []
         }
 
-        # Create a single checker instance
+        # Create single checker instance
         checker = TelegramUsernameChecker()
         try:
-            for username in all_variants:
-                result = await checker.check_fragment_api(username.lower())
-                if result is not None:
-                    # Categorize by type with new priorities
-                    if username == base_name:
-                        available_usernames["op"].append(username)
-                    elif username in UsernameGenerator.sop(base_name):
-                        available_usernames["sop"].append(username)
-                    elif username in UsernameGenerator.canon(base_name) or username in UsernameGenerator.scanon(base_name):
-                        available_usernames["canon_scanon"].append(username)
-                    elif username in UsernameGenerator.tamhur(base_name):
-                        available_usernames["tamhur"].append(username)
-                    elif username in UsernameGenerator.ganhur(base_name) or username in UsernameGenerator.switch(base_name):
-                        available_usernames["ganhur_switch"].append(username)
-                    elif username in UsernameGenerator.kurkuf(base_name):
-                        available_usernames["kurhuf"].append(username)
+            # Check availability in optimized batches
+            results = await batch_check_usernames(checker, all_variants)
+
+            # Categorize results
+            for username, is_available in results.items():
+                if not is_available:
+                    continue
+
+                if username == base_name:
+                    available_usernames["op"].append(username)
+                elif username in UsernameGenerator.sop(base_name):
+                    available_usernames["sop"].append(username)
+                elif username in UsernameGenerator.canon(base_name) or username in UsernameGenerator.scanon(base_name):
+                    available_usernames["canon_scanon"].append(username)
+                elif username in UsernameGenerator.tamhur(base_name):
+                    available_usernames["tamhur"].append(username)
+                elif username in UsernameGenerator.ganhur(base_name) or username in UsernameGenerator.switch(base_name):
+                    available_usernames["ganhur_switch"].append(username)
+                elif username in UsernameGenerator.kurkuf(base_name):
+                    available_usernames["kurhuf"].append(username)
+
+            # Format results by category with new priorities
+            result_text = "✅ <b>Hasil Generate Username</b>\n\n"
+            categories = {
+                "op": "👑 <b>On Point</b>",
+                "sop": "💫 <b>Semi On Point</b>",
+                "canon_scanon": "🔄 <b>Canon & Scanon</b>",
+                "tamhur": "💎 <b>Tambah Huruf</b>",
+                "ganhur_switch": "📝 <b>Ganti & Switch</b>",
+                "kurhuf": "✂️ <b>Kurang Huruf</b>"
+            }
+
+            found_any = False
+            for category, usernames in available_usernames.items():
+                if usernames:
+                    found_any = True
+                    result_text += f"{categories[category]}:\n"
+                    for username in usernames[:3]:  # Limit to 3 per category
+                        result_text += f"• <code>@{username}</code>\n"
+                    result_text += "\n"
+
+            if found_any:
+                result_text += "\n⚠️ <b>PENTING:</b>\n"
+                result_text += "• 💾 Simpan username di chat pribadi\n"
+                result_text += "• ⏳ Data akan dihapus dalam 5 menit\n"
+                result_text += "• 🔄 Gunakan username segera sebelum diambil orang lain"
+            else:
+                result_text = "❌ <b>Tidak ditemukan username yang tersedia</b>\n\n"
+                result_text += "ℹ️ <b>Info:</b>\n"
+                result_text += "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
+                result_text += "• 🔄 Silakan coba username lain"
+
+            await processing_msg.edit_text(result_text)
+            username_store.mark_generation_complete(base_name)
+
         finally:
             await checker.session.close()
-
-        # Format results by category with new priorities
-        result_text = "✅ <b>Hasil Generate Username</b>\n\n"
-        categories = {
-            "op": "👑 <b>On Point</b>",
-            "sop": "💫 <b>Semi On Point</b>",
-            "canon_scanon": "🔄 <b>Canon & Scanon</b>",
-            "tamhur": "💎 <b>Tambah Huruf</b>",
-            "ganhur_switch": "📝 <b>Ganti & Switch</b>",
-            "kurhuf": "✂️ <b>Kurang Huruf</b>"
-        }
-
-        found_any = False
-        for category, usernames in available_usernames.items():
-            if usernames:
-                found_any = True
-                result_text += f"{categories[category]}:\n"
-                for username in usernames[:3]:  # Limit to 3 per category
-                    result_text += f"• <code>@{username}</code>\n"
-                result_text += "\n"
-
-        if found_any:
-            result_text += "\n⚠️ <b>PENTING:</b>\n"
-            result_text += "• 💾 Simpan username di chat pribadi\n"
-            result_text += "• ⏳ Data akan dihapus dalam 5 menit\n"
-            result_text += "• 🔄 Gunakan username segera sebelum diambil orang lain"
-        else:
-            result_text = "❌ <b>Tidak ditemukan username yang tersedia</b>\n\n"
-            result_text += "ℹ️ <b>Info:</b>\n"
-            result_text += "• ⏳ Data pencarian akan dihapus dalam 5 menit\n"
-            result_text += "• 🔄 Silakan coba username lain"
-
-        await processing_msg.edit_text(result_text)
-        username_store.mark_generation_complete(base_name)
 
     except Exception as e:
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")

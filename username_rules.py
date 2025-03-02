@@ -47,8 +47,7 @@ VALID_COMBINATIONS = {
             UsernameTypes.Uncommon.OP,
             UsernameTypes.Uncommon.SOP,
             UsernameTypes.Uncommon.CANON,
-            UsernameTypes.Common.TAMHUR,
-            UsernameTypes.Common.GANHUR
+            UsernameTypes.Common.TAMHUR  # Removed GANHUR from MULCHAR
         ]
     },
     "IDOL_WGROUP_MULCHAR_IMBUHAN_SNS_IDOL": {
