@@ -1,21 +1,5 @@
 import logging.handlers
 import sys
-
-# Update logging configuration at the start of the file
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.handlers.RotatingFileHandler(
-            'bot.log',
-            maxBytes=10000000,
-            backupCount=5
-        )
-    ]
-)
-logger = logging.getLogger(__name__)
-
 import asyncio
 import os
 import re
@@ -31,6 +15,21 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
+# Update logging configuration
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.handlers.RotatingFileHandler(
+            'bot.log',
+            maxBytes=10000000,
+            backupCount=5
+        )
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Configure base settings
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
@@ -38,10 +37,9 @@ if not TOKEN:
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
-CHANNEL_ID = "-1002443114227"  # Fixed numeric format for private channel
+CHANNEL_ID = "-1002443114227"
 CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
 
-# Message when user is not subscribed
 SUBSCRIBE_MESSAGE = (
     "⚠️ <b>Perhatian!</b> ⚠️\n\n"
     "Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
@@ -59,7 +57,7 @@ user_locks = {}
 # Username store
 username_store = UsernameStore()
 
-# Flask app untuk keep-alive
+# Flask app for keep-alive
 app = Flask(__name__)
 
 @app.route('/')
@@ -71,49 +69,7 @@ def run_flask():
     """Run Flask in a separate thread"""
     app.run(host='0.0.0.0', port=5000)
 
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    """Send a message when the command /start is issued."""
-    welcome_msg = (
-        "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
-        "📋 <b>Cara Penggunaan:</b>\n"
-        f"1️⃣ Join channel kami:\n   🔗 {CHANNEL_LINK}\n\n"
-        "2️⃣ Gunakan command:\n"
-        "   📝 <code>/gen [username]</code> - Generate variasi username\n"
-        "   📝 <code>/allusn [username]</code> - Generate all username variations\n\n"
-        "📱 <b>Contoh:</b>\n"
-        "   <code>/gen username</code>\n\n"
-        "⚠️ <b>Penting:</b>\n"
-        "• 📋 Username yang sudah di-generate akan disimpan\n"
-        "• ⏳ Data username akan dihapus otomatis setelah 5 menit\n"
-        "• 💾 Harap simpan hasil generate di chat pribadi Anda"
-    )
-    await message.reply(welcome_msg)
-
-@dp.message(Command("help"))
-async def help_command(message: Message):
-    """Send a message when the command /help is issued."""
-    await cmd_start(message)
-
-async def generate_all_variants(base_name: str) -> list:
-    """Generate username variants using all available methods"""
-    all_usernames = set()  # Using set to avoid duplicates
-
-    # Generate using all methods
-    all_usernames.update(UsernameGenerator.ganhur(base_name))  # Random letter substitution
-    all_usernames.update(UsernameGenerator.canon(base_name))   # i/l swap
-    all_usernames.update(UsernameGenerator.sop(base_name))     # Add random character
-    all_usernames.update(UsernameGenerator.scanon(base_name))  # Add 's'
-    all_usernames.update(UsernameGenerator.switch(base_name))  # Swap adjacent
-    all_usernames.update(UsernameGenerator.kurkuf(base_name))  # Remove random
-
-    # Convert back to list and filter out already generated usernames
-    return [
-        username for username in all_usernames 
-        if not username_store.is_generated(base_name, username)
-    ]
-
-async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=4) -> dict:
+async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=3) -> dict:
     """Check a batch of usernames concurrently with improved monitoring and timeout"""
     results = {}
     total_batches = (len(usernames) + batch_size - 1) // batch_size
@@ -130,7 +86,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
                 # Process current batch with timeout
                 try:
-                    async with asyncio.timeout(45):  # 45 second timeout per batch
+                    async with asyncio.timeout(60):  # 60 second timeout per batch
                         batch_results = await checker.batch_check(batch)
 
                         # Process results
@@ -157,12 +113,11 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
 @dp.message(Command("gen"))
 async def handle_gen(message: Message):
-    """Handle the /gen command with improved concurrency and rate limiting"""
+    """Handle the /gen command with improved error handling"""
     user_id = message.from_user.id
 
     # Check channel subscription
     if not await check_subscription(user_id):
-        logger.warning(f"User {user_id} tried to use bot without joining channel")
         await message.reply(SUBSCRIBE_MESSAGE)
         return
 
@@ -246,12 +201,60 @@ async def handle_gen(message: Message):
 
     except Exception as e:
         logger.error(f"Error in handle_gen: {str(e)}")
-        await message.reply("❌ Terjadi kesalahan. Silakan coba lagi nanti.")
+        await message.reply(
+            "❌ <b>Terjadi kesalahan</b>\n\n"
+            "ℹ️ <b>Saran:</b>\n"
+            "• 🔄 Silakan coba lagi dalam beberapa saat\n"
+            "• 📝 Jika masih error, coba username lain"
+        )
 
     finally:
         # Always unlock user
         if user_id in user_locks:
             del user_locks[user_id]
+
+async def generate_all_variants(base_name: str) -> list:
+    """Generate username variants using all available methods"""
+    all_usernames = set()  # Using set to avoid duplicates
+
+    # Generate using all methods
+    all_usernames.update(UsernameGenerator.ganhur(base_name))  # Random letter substitution
+    all_usernames.update(UsernameGenerator.canon(base_name))   # i/l swap
+    all_usernames.update(UsernameGenerator.sop(base_name))     # Add random character
+    all_usernames.update(UsernameGenerator.scanon(base_name))  # Add 's'
+    all_usernames.update(UsernameGenerator.switch(base_name))  # Swap adjacent
+    all_usernames.update(UsernameGenerator.kurkuf(base_name))  # Remove random
+
+    # Convert back to list and filter out already generated usernames
+    return [
+        username for username in all_usernames 
+        if not username_store.is_generated(base_name, username)
+    ]
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    """Send a message when the command /start is issued."""
+    welcome_msg = (
+        "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
+        "📋 <b>Cara Penggunaan:</b>\n"
+        f"1️⃣ Join channel kami:\n   🔗 {CHANNEL_LINK}\n\n"
+        "2️⃣ Gunakan command:\n"
+        "   📝 <code>/gen [username]</code> - Generate variasi username\n"
+        "   📝 <code>/allusn [username]</code> - Generate all username variations\n\n"
+        "📱 <b>Contoh:</b>\n"
+        "   <code>/gen username</code>\n\n"
+        "⚠️ <b>Penting:</b>\n"
+        "• 📋 Username yang sudah di-generate akan disimpan\n"
+        "• ⏳ Data username akan dihapus otomatis setelah 5 menit\n"
+        "• 💾 Harap simpan hasil generate di chat pribadi Anda"
+    )
+    await message.reply(welcome_msg)
+
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    """Send a message when the command /help is issued."""
+    await cmd_start(message)
+
 
 async def check_subscription(user_id: int) -> bool:
     """Check if user is subscribed to the channel with improved error handling"""
