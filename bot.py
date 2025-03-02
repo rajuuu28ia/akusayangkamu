@@ -113,7 +113,7 @@ async def generate_all_variants(base_name: str) -> list:
         if not username_store.is_generated(base_name, username)
     ]
 
-async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=8) -> dict:
+async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=6) -> dict:
     """Check a batch of usernames concurrently with improved monitoring and timeout"""
     results = {}
     tasks = []
@@ -125,59 +125,41 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
     try:
         # Add timeout for entire batch operation
-        async with asyncio.timeout(180):  # 3 minute total timeout, increased from 2
+        async with asyncio.timeout(180):  # 3 minute total timeout
             for i in range(0, len(usernames), batch_size):
                 current_batch += 1
                 batch = usernames[i:i + batch_size]
                 logger.info(f"Processing batch {current_batch}/{total_batches} with {len(batch)} usernames")
 
-                # Create tasks for each username in batch
-                for username in batch:
-                    task = asyncio.create_task(checker.check_username(username.lower()))
-                    tasks.append((username, task))
-
-                # Wait for current batch to complete with timeout
+                # Process current batch with timeout
                 try:
                     async with asyncio.timeout(30):  # 30 second timeout per batch
-                        batch_results = []
-                        for username, task in tasks:
-                            try:
-                                result = await task
-                                if result is not None:
-                                    results[username] = result
-                                    batch_results.append(username)
-                            except Exception as e:
-                                logger.error(f"Error checking username {username}: {str(e)}")
+                        batch_results = await checker.batch_check(batch)
 
-                        tasks = []  # Clear tasks for next batch
+                        # Process results
+                        for username, is_available in zip(batch, batch_results):
+                            if is_available is not None:  # Skip errors
+                                results[username] = is_available
 
-                        # Log batch completion
-                        logger.info(f"Batch {current_batch}/{total_batches} completed. Found {len(batch_results)} available usernames")
+                        # Log progress
+                        found_count = sum(1 for r in results.values() if r)
+                        logger.info(f"Batch {current_batch}/{total_batches} completed. Found {found_count} available usernames so far")
 
-                        # Small delay between batches to avoid rate limits
+                        # Small delay between batches
                         if i + batch_size < len(usernames):
-                            delay = 0.5  # Reduced delay between batches
-                            logger.info(f"Waiting {delay}s before next batch...")
-                            await asyncio.sleep(delay)
+                            await asyncio.sleep(0.5)  # Reduced delay between batches
 
                 except asyncio.TimeoutError:
                     logger.error(f"Timeout processing batch {current_batch}")
-                    # Cancel remaining tasks in current batch
-                    for _, task in tasks:
-                        task.cancel()
-                    tasks = []
-                    continue  # Move to next batch
+                    continue  # Skip to next batch
 
     except asyncio.TimeoutError:
         logger.error("Global timeout in batch processing")
-    finally:
-        # Cancel any remaining tasks
-        for _, task in tasks:
-            task.cancel()
 
-        total_time = time.time() - batch_start_time
-        logger.info(f"All batches completed in {total_time:.2f}s. Found {len(results)} available usernames")
-        return results
+    total_time = time.time() - batch_start_time
+    logger.info(f"All batches completed in {total_time:.2f}s. Found {len([r for r in results.values() if r])} available usernames")
+
+    return results
 
 @dp.message(Command("gen"))
 async def handle_gen(message: Message):

@@ -18,7 +18,7 @@ CHANNEL = 'Please enter a username assigned to a user.'
 NOT_FOUND = 'No Telegram users found.'
 
 class RateLimiter:
-    def __init__(self, rate_limit=30, time_window=60):
+    def __init__(self, rate_limit=25, time_window=60):
         self.rate_limit = rate_limit  # Maximum requests per time window
         self.time_window = time_window  # Time window in seconds
         self.requests = []  # List to track request timestamps
@@ -34,6 +34,7 @@ class RateLimiter:
             if len(self.requests) >= self.rate_limit:
                 oldest_request = self.requests[0]
                 sleep_time = max(0, self.time_window - (now - oldest_request))
+                logger.warning(f"Rate limit reached, waiting {sleep_time:.1f}s")
                 await asyncio.sleep(sleep_time)
 
             self.requests.append(now)
@@ -41,11 +42,16 @@ class RateLimiter:
 class TelegramUsernameChecker:
     def __init__(self):
         self.session = None
-        self.rate_limiter = RateLimiter(rate_limit=30, time_window=60)  # Increased rate limit
+        self.rate_limiter = RateLimiter(rate_limit=20, time_window=60)  # Reduced rate limit
         self._cache = {}
         self._cache_ttl = 300  # 5 minutes
-        self._backoff_factor = 1.5  # For exponential backoff
-        self._max_retries = 3  # Maximum number of retries
+        self._backoff_factor = 1.5
+        self._max_retries = 5  # Increased retries
+        self._session_timeout = aiohttp.ClientTimeout(
+            total=30,
+            connect=10,
+            sock_read=10
+        )
 
         # Get API credentials from environment
         self.api_id = os.getenv("TELEGRAM_API_ID")
@@ -56,8 +62,15 @@ class TelegramUsernameChecker:
 
     async def _init_session(self):
         if self.session is None:
-            timeout = aiohttp.ClientTimeout(total=20, connect=10)  # Adjusted timeouts
-            self.session = aiohttp.ClientSession(timeout=timeout)
+            connector = aiohttp.TCPConnector(
+                limit=10,  # Connection pool limit
+                force_close=True,  # Force close connections
+                enable_cleanup_closed=True
+            )
+            self.session = aiohttp.ClientSession(
+                timeout=self._session_timeout,
+                connector=connector
+            )
 
     async def close(self):
         if self.session:
@@ -69,6 +82,7 @@ class TelegramUsernameChecker:
         if username in self._cache:
             result, timestamp = self._cache[username]
             if time.time() - timestamp <= self._cache_ttl:
+                logger.debug(f"Cache hit for @{username}")
                 return result
             del self._cache[username]
         return None
@@ -78,28 +92,37 @@ class TelegramUsernameChecker:
         self._cache[username] = (result, time.time())
 
     async def _make_request(self, method: str, url: str, **kwargs):
-        """Make HTTP request with retry logic"""
+        """Make HTTP request with retry logic and improved error handling"""
+        await self._init_session()
+
         for retry in range(self._max_retries):
             try:
                 await self.rate_limiter.acquire()
+
                 async with self.session.request(method, url, **kwargs) as response:
                     if response.status == 429:  # Rate limited
                         wait_time = self._backoff_factor ** retry
                         logger.warning(f"Rate limited. Waiting {wait_time:.1f}s before retry...")
                         await asyncio.sleep(wait_time)
                         continue
+
+                    response.raise_for_status()
                     return response
-            except asyncio.TimeoutError:
+
+            except aiohttp.ClientError as e:
+                wait_time = self._backoff_factor ** retry
+                logger.warning(f"Connection error ({e.__class__.__name__}). Retrying in {wait_time:.1f}s...")
+
                 if retry < self._max_retries - 1:
-                    wait_time = self._backoff_factor ** retry
-                    logger.warning(f"Timeout. Retrying in {wait_time:.1f}s...")
                     await asyncio.sleep(wait_time)
                     continue
+
                 raise
+
         return None
 
     async def get_api_url(self):
-        await self._init_session()
+        """Get Fragment API URL with improved error handling"""
         try:
             response = await self._make_request('GET', 'https://fragment.com')
             if not response:
@@ -110,16 +133,19 @@ class TelegramUsernameChecker:
             scripts = tree.xpath('//script/text()')
             pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
             script = next((script for script in scripts if pattern.search(script)), None)
+
             if script:
                 api_url = f'https://fragment.com{json.loads(pattern.search(script).group(1)).get("apiUrl")}'
                 return api_url
+
         except Exception as e:
-            logger.error(f"Error getting API URL: {e}")
+            logger.error(f"Error getting API URL: {str(e)}")
+
         return None
 
     async def check_username(self, username: str) -> bool:
         """Check if a Telegram username is available"""
-        # Check format and reserved words
+        # Validate username format
         if not re.match(r'^[a-zA-Z0-9_]{5,32}$', username):
             logger.warning(f"Invalid username format: {username}")
             return False
@@ -128,20 +154,19 @@ class TelegramUsernameChecker:
             logger.warning(f"Reserved username: {username}")
             return False
 
-        # Check cache first
+        # Check cache
         cached_result = self._get_cache(username)
         if cached_result is not None:
-            logger.info(f"Cache hit for @{username}")
             return cached_result
 
         try:
-            await self._init_session()
-
+            # Get API URL
             api_url = await self.get_api_url()
             if not api_url:
                 logger.error(f"Could not get API URL for @{username}")
                 return False
 
+            # Check username availability
             params = {
                 'query': username,
                 'method': 'searchAuctions',
@@ -163,6 +188,7 @@ class TelegramUsernameChecker:
 
                     if price.isdigit():
                         logger.info(f"@{username} is for sale: {price}💎")
+                        self._set_cache(username, False)
                         return False
 
                     if status == 'Unavailable':
@@ -180,28 +206,40 @@ class TelegramUsernameChecker:
             return False
 
         except Exception as e:
-            logger.error(f"Error checking @{username}: {e}")
+            logger.error(f"Error checking @{username}: {str(e)}")
             return False
 
-    async def batch_check(self, usernames: list, batch_size: int = 8) -> list:
-        """Check multiple usernames concurrently in batches"""
+    async def batch_check(self, usernames: list, batch_size: int = 6) -> list:
+        """Check multiple usernames concurrently in batches with improved error handling"""
         results = []
+
+        # Process in smaller batches to avoid overwhelming
         for i in range(0, len(usernames), batch_size):
             batch = usernames[i:i + batch_size]
-            tasks = [self.check_username(username) for username in batch]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            batch_results = []
 
-            # Process results
-            for username, result in zip(batch, batch_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Error checking @{username}: {result}")
-                    results.append(False)
-                else:
-                    results.append(result)
+            try:
+                # Create tasks for batch
+                tasks = [self.check_username(username) for username in batch]
+                # Wait for all tasks with timeout
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Small delay between batches to prevent overwhelming
-            if i + batch_size < len(usernames):
-                await asyncio.sleep(0.3)  # Reduced delay between batches
+                # Process results
+                for username, result in zip(batch, batch_results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Error checking @{username}: {result}")
+                        results.append(False)
+                    else:
+                        results.append(result)
+
+                # Small delay between batches
+                if i + batch_size < len(usernames):
+                    await asyncio.sleep(0.5)  # Reduced delay
+
+            except Exception as e:
+                logger.error(f"Batch processing error: {str(e)}")
+                # Fill remaining results as False
+                results.extend([False] * len(batch))
 
         return results
 
