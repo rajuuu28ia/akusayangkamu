@@ -113,19 +113,16 @@ async def generate_all_variants(base_name: str) -> list:
         if not username_store.is_generated(base_name, username)
     ]
 
-async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=6) -> dict:
+async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=4) -> dict:
     """Check a batch of usernames concurrently with improved monitoring and timeout"""
     results = {}
-    tasks = []
     total_batches = (len(usernames) + batch_size - 1) // batch_size
     current_batch = 0
-
-    logger.info(f"Starting batch check for {len(usernames)} usernames in {total_batches} batches")
     batch_start_time = time.time()
 
     try:
         # Add timeout for entire batch operation
-        async with asyncio.timeout(180):  # 3 minute total timeout
+        async with asyncio.timeout(300):  # 5 minute total timeout
             for i in range(0, len(usernames), batch_size):
                 current_batch += 1
                 batch = usernames[i:i + batch_size]
@@ -133,7 +130,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
                 # Process current batch with timeout
                 try:
-                    async with asyncio.timeout(30):  # 30 second timeout per batch
+                    async with asyncio.timeout(45):  # 45 second timeout per batch
                         batch_results = await checker.batch_check(batch)
 
                         # Process results
@@ -145,10 +142,6 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
                         found_count = sum(1 for r in results.values() if r)
                         logger.info(f"Batch {current_batch}/{total_batches} completed. Found {found_count} available usernames so far")
 
-                        # Small delay between batches
-                        if i + batch_size < len(usernames):
-                            await asyncio.sleep(0.5)  # Reduced delay between batches
-
                 except asyncio.TimeoutError:
                     logger.error(f"Timeout processing batch {current_batch}")
                     continue  # Skip to next batch
@@ -157,7 +150,8 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
         logger.error("Global timeout in batch processing")
 
     total_time = time.time() - batch_start_time
-    logger.info(f"All batches completed in {total_time:.2f}s. Found {len([r for r in results.values() if r])} available usernames")
+    found_count = sum(1 for r in results.values() if r)
+    logger.info(f"All batches completed in {total_time:.2f}s. Found {found_count} available usernames")
 
     return results
 
