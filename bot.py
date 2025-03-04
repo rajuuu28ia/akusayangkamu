@@ -367,16 +367,28 @@ async def handle_allusn(message: Message):
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
-        # Generate all variations in prioritized order
+        # Generate all variations in prioritized order based on type
         all_variants = []
         all_variants.append(base_name)  # OP first
-        all_variants.extend(UsernameGenerator.sop(base_name))  # SOP second
-        all_variants.extend(UsernameGenerator.canon(base_name))  # Canon/Scanon third
-        all_variants.extend(UsernameGenerator.scanon(base_name))
-        all_variants.extend(UsernameGenerator.tamhur(base_name))  # Tamhur fourth
-        all_variants.extend(UsernameGenerator.ganhur(base_name))  # Ganhur/Switch fifth
-        all_variants.extend(UsernameGenerator.switch(base_name))
-        all_variants.extend(UsernameGenerator.kurkuf(base_name))  # Kurhuf last
+
+        # Check if username is for mulchar (starts with 'mc' or 'mulchar')
+        is_mulchar = base_name.lower().startswith(('mc', 'mulchar'))
+
+        # Different generation methods based on type
+        if is_mulchar:
+            # Mulchar: only tamhur method
+            logger.info(f"Generating variations for mulchar: {base_name}")
+            all_variants.extend(UsernameGenerator.tamhur(base_name))  # Only tamhur for mulchar
+        else:
+            # Idol: all methods including ganhur
+            logger.info(f"Generating variations for idol: {base_name}")
+            all_variants.extend(UsernameGenerator.sop(base_name))  # SOP second
+            all_variants.extend(UsernameGenerator.canon(base_name))  # Canon/Scanon third
+            all_variants.extend(UsernameGenerator.scanon(base_name))
+            all_variants.extend(UsernameGenerator.tamhur(base_name))  # Tamhur fourth
+            all_variants.extend(UsernameGenerator.ganhur(base_name))  # Ganhur/Switch fifth
+            all_variants.extend(UsernameGenerator.switch(base_name))
+            all_variants.extend(UsernameGenerator.kurkuf(base_name))  # Kurhuf last
 
         # Remove duplicates while preserving order
         all_variants = list(dict.fromkeys(all_variants))
@@ -387,8 +399,8 @@ async def handle_allusn(message: Message):
             "sop": [],
             "canon_scanon": [],
             "tamhur": [],
-            "ganhur_switch": [],
-            "kurhuf": []
+            "ganhur_switch": [] if not is_mulchar else None,  # Only for idol
+            "kurhuf": [] if not is_mulchar else None  # Only for idol
         }
 
         # Create single checker instance
@@ -417,18 +429,29 @@ async def handle_allusn(message: Message):
 
             # Format results by category with new priorities
             result_text = "✅ <b>Hasil Generate Username</b>\n\n"
-            categories = {
-                "op": "👑 <b>On Point</b>",
-                "sop": "💫 <b>Semi On Point</b>",
-                "canon_scanon": "🔄 <b>Canon & Scanon</b>",
-                "tamhur": "💎 <b>Tambah Huruf</b>",
-                "ganhur_switch": "📝 <b>Ganti & Switch</b>",
-                "kurhuf": "✂️ <b>Kurang Huruf</b>"
-            }
+
+            if is_mulchar:
+                result_text += "🎭 <b>Mode: MULCHAR</b> (Hanya metode Tambah Huruf)\n\n"
+                categories = {
+                    "op": "👑 <b>On Point</b>",
+                    "sop": "💫 <b>Semi On Point</b>",
+                    "canon_scanon": "🔄 <b>Canon & Scanon</b>",
+                    "tamhur": "💎 <b>Tambah Huruf</b>"
+                }
+            else:
+                result_text += "🎤 <b>Mode: IDOL</b> (Semua metode)\n\n"
+                categories = {
+                    "op": "👑 <b>On Point</b>",
+                    "sop": "💫 <b>Semi On Point</b>",
+                    "canon_scanon": "🔄 <b>Canon & Scanon</b>",
+                    "tamhur": "💎 <b>Tambah Huruf</b>",
+                    "ganhur_switch": "📝 <b>Ganti & Switch</b>",
+                    "kurhuf": "✂️ <b>Kurang Huruf</b>"
+                }
 
             found_any = False
             for category, usernames in available_usernames.items():
-                if usernames:
+                if usernames is not None and usernames:  # Check if category exists and has usernames
                     found_any = True
                     result_text += f"{categories[category]}:\n"
                     for username in usernames[:3]:  # Limit to 3 per category
