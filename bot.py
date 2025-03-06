@@ -31,10 +31,14 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
+# Update TOKEN at the top of the file
+TOKEN = "7894481490:AAEnGy_Pydm72b79Cuxuq6gi6cW5oR3RCQo" #This line was added from edited snippet
+
+
 # Get token from environment variable with fallback
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
+#TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+#if not TOKEN:
+#    raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
@@ -205,7 +209,7 @@ async def handle_allusn(message: Message):
     base_name = args[1].lower()
 
     # Validate username
-    if len(base_name) < 4:  # Changed from 5 to 4
+    if len(base_name) < 4:
         await message.reply("⚠️ Username terlalu pendek! Minimal 4 karakter.")
         return
     elif len(base_name) > 32:
@@ -231,79 +235,97 @@ async def handle_allusn(message: Message):
             "⏳ Mohon tunggu, sedang mengecek ketersediaan username..."
         )
 
-        # Generate all variations in prioritized order based on type
-        all_variants = []
-        all_variants.append(base_name)  # OP first
-
-        # Check if username is for mulchar (starts with 'mc' or 'mulchar')
+        # Determine if it's a mulchar username
         is_mulchar = base_name.lower().startswith(('mc', 'mulchar'))
 
-        # Different generation methods based on type
+        # Generate variants based on type
+        all_variants = [base_name]  # Start with base name
+
         if is_mulchar:
-            # Mulchar: only tamhur method
+            # Mulchar: only allowed methods
             logger.info(f"Generating variations for mulchar: {base_name}")
-            all_variants.extend(UsernameGenerator.tamhur(base_name))  # Only tamhur for mulchar
+            all_variants.extend(UsernameGenerator.tamhur(base_name))  # Priority 1
+            all_variants.extend(UsernameGenerator.switch(base_name))  # Priority 2
+            all_variants.extend(UsernameGenerator.kurkuf(base_name))  # Priority 3
         else:
-            # Idol: all methods including ganhur
-            logger.info(f"Generating variations for idol: {base_name}")
-            all_variants.extend(UsernameGenerator.sop(base_name))  # SOP second
-            all_variants.extend(UsernameGenerator.canon(base_name))  # Canon/Scanon third
+            # Regular username: all methods
+            logger.info(f"Generating variations for regular username: {base_name}")
+            all_variants.extend(UsernameGenerator.sop(base_name))
+            all_variants.extend(UsernameGenerator.canon(base_name))
             all_variants.extend(UsernameGenerator.scanon(base_name))
-            all_variants.extend(UsernameGenerator.tamhur(base_name))  # Tamhur fourth
-            all_variants.extend(UsernameGenerator.ganhur(base_name))  # Ganhur/Switch fifth
+            all_variants.extend(UsernameGenerator.tamhur(base_name))
+            all_variants.extend(UsernameGenerator.ganhur(base_name))
             all_variants.extend(UsernameGenerator.switch(base_name))
-            all_variants.extend(UsernameGenerator.kurkuf(base_name))  # Kurhuf last
+            all_variants.extend(UsernameGenerator.kurkuf(base_name))
 
         # Remove duplicates while preserving order
         all_variants = list(dict.fromkeys(all_variants))
 
-        # Initialize result categories
-        available_usernames = {
-            "op": [],
-            "sop": [],
-            "canon_scanon": [],
-            "tamhur": [],
-            "ganhur_switch": [] if not is_mulchar else None,  # Only for idol
-            "kurhuf": [] if not is_mulchar else None  # Only for idol
-        }
+        # Initialize result categories based on type
+        if is_mulchar:
+            available_usernames = {
+                "op": [],
+                "tamhur": [],  # Priority for mulchar
+                "switch": [],  # Secondary for mulchar
+                "kurhuf": []   # Tertiary for mulchar
+            }
+        else:
+            available_usernames = {
+                "op": [],
+                "sop": [],
+                "canon_scanon": [],
+                "tamhur": [],
+                "ganhur_switch": [],
+                "kurhuf": []
+            }
 
-        # Create single checker instance
+        # Create checker instance
         checker = TelegramUsernameChecker()
         try:
-            # Check availability in optimized batches
+            # Check availability in batches
             results = await batch_check_usernames(checker, all_variants)
 
-            # Categorize results
+            # Categorize results based on type
             for username, is_available in results.items():
                 if not is_available:
                     continue
 
                 if username == base_name:
                     available_usernames["op"].append(username)
-                elif username in UsernameGenerator.sop(base_name):
-                    available_usernames["sop"].append(username)
-                elif username in UsernameGenerator.canon(base_name) or username in UsernameGenerator.scanon(base_name):
-                    available_usernames["canon_scanon"].append(username)
-                elif username in UsernameGenerator.tamhur(base_name):
-                    available_usernames["tamhur"].append(username)
-                elif username in UsernameGenerator.ganhur(base_name) or username in UsernameGenerator.switch(base_name):
-                    available_usernames["ganhur_switch"].append(username)
-                elif username in UsernameGenerator.kurkuf(base_name):
-                    available_usernames["kurhuf"].append(username)
+                elif is_mulchar:
+                    # Mulchar categorization
+                    if username in UsernameGenerator.tamhur(base_name):
+                        available_usernames["tamhur"].append(username)
+                    elif username in UsernameGenerator.switch(base_name):
+                        available_usernames["switch"].append(username)
+                    elif username in UsernameGenerator.kurkuf(base_name):
+                        available_usernames["kurhuf"].append(username)
+                else:
+                    # Regular username categorization
+                    if username in UsernameGenerator.sop(base_name):
+                        available_usernames["sop"].append(username)
+                    elif username in UsernameGenerator.canon(base_name) or username in UsernameGenerator.scanon(base_name):
+                        available_usernames["canon_scanon"].append(username)
+                    elif username in UsernameGenerator.tamhur(base_name):
+                        available_usernames["tamhur"].append(username)
+                    elif username in UsernameGenerator.ganhur(base_name) or username in UsernameGenerator.switch(base_name):
+                        available_usernames["ganhur_switch"].append(username)
+                    elif username in UsernameGenerator.kurkuf(base_name):
+                        available_usernames["kurhuf"].append(username)
 
-            # Format results by category with new priorities
+            # Format results with appropriate categories
             result_text = "✅ <b>Hasil Generate Username</b>\n\n"
 
             if is_mulchar:
-                result_text += "🎭 <b>Mode: MULCHAR</b> (Hanya metode Tambah Huruf)\n\n"
+                result_text += "🎭 <b>Mode: MULCHAR</b> (Metode Khusus)\n\n"
                 categories = {
                     "op": "👑 <b>On Point</b>",
-                    "sop": "💫 <b>Semi On Point</b>",
-                    "canon_scanon": "🔄 <b>Canon & Scanon</b>",
-                    "tamhur": "💎 <b>Tambah Huruf</b>"
+                    "tamhur": "💎 <b>Tambah Huruf</b>",
+                    "switch": "🔄 <b>Tukar Huruf</b>",
+                    "kurhuf": "✂️ <b>Kurang Huruf</b>"
                 }
             else:
-                result_text += "🎤 <b>Mode: IDOL</b> (Semua metode)\n\n"
+                result_text += "🎤 <b>Mode: REGULAR</b> (Semua metode)\n\n"
                 categories = {
                     "op": "👑 <b>On Point</b>",
                     "sop": "💫 <b>Semi On Point</b>",
@@ -315,7 +337,7 @@ async def handle_allusn(message: Message):
 
             found_any = False
             for category, usernames in available_usernames.items():
-                if usernames is not None and usernames:  # Check if category exists and has usernames
+                if usernames and category in categories:  # Check if category exists and has usernames
                     found_any = True
                     result_text += f"{categories[category]}:\n"
                     for username in usernames[:3]:  # Limit to 3 per category
