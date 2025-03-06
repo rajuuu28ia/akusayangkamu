@@ -217,6 +217,16 @@ class TelegramUsernameChecker:
 
                             if user_info == NOT_FOUND and status == 'Unavailable':
                                 entity = await self.get_telegram_web_user(username)
+                                # Add additional check for banned usernames
+                                try:
+                                    async with self.session.get(f'https://t.me/{username}') as response:
+                                        page_text = await response.text()
+                                        if "This account has been banned for" in page_text:
+                                            logger.error(f'{username_tag} 🚫 Banned Account')
+                                            return None
+                                except Exception as e:
+                                    logger.error(f"Error checking banned status for {username}: {str(e)}")
+
                                 if not entity:
                                     logger.critical(f'✅ {username_tag} Maybe Free or Reserved ✅')
                                     self._cache_result(username, True)
