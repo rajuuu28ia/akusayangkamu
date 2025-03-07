@@ -136,6 +136,17 @@ class TelegramUsernameChecker:
                 logger.info(f"Starting check #{self._check_count} for @{username} (Time since last check: {time_since_last:.2f}s)")
                 self._last_check_time = current_time
 
+                # Check banned status first
+                try:
+                    async with self.session.get(f'https://t.me/{username}') as response:
+                        page_text = await response.text()
+                        if "This account has been banned for" in page_text:
+                            logger.error(f'@{username} 🚫 Username telah dibanned')
+                            return None
+                except Exception as e:
+                    logger.error(f"Error checking banned status for {username}: {str(e)}")
+                    return None  # Return None if we can't verify banned status
+
                 cached_result = await self._get_cached_result(username)
                 if cached_result is not None:
                     logger.info(f"Cache hit for @{username}: {cached_result}")
@@ -159,7 +170,6 @@ class TelegramUsernameChecker:
                             'X-Api-Hash': self.api_hash
                         }
                         search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
-                        start_time = time.time()
 
                         try:
                             # Add timeout for API request
@@ -216,18 +226,6 @@ class TelegramUsernameChecker:
                                 return None
 
                             if user_info == NOT_FOUND and status == 'Unavailable':
-                                # Check banned status first before marking as available
-                                try:
-                                    async with self.session.get(f'https://t.me/{username}') as response:
-                                        page_text = await response.text()
-                                        if "This account has been banned for" in page_text:
-                                            logger.error(f'{username_tag} 🚫 Username telah dibanned')
-                                            return None
-                                except Exception as e:
-                                    logger.error(f"Error checking banned status for {username}: {str(e)}")
-                                    return None  # Return None if we can't verify banned status
-
-                                # Only proceed with web user check if not banned
                                 entity = await self.get_telegram_web_user(username)
                                 if not entity:
                                     logger.critical(f'✅ {username_tag} Maybe Free or Reserved ✅')
