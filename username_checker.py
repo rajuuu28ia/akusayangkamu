@@ -136,16 +136,39 @@ class TelegramUsernameChecker:
                 logger.info(f"Starting check #{self._check_count} for @{username} (Time since last check: {time_since_last:.2f}s)")
                 self._last_check_time = current_time
 
-                # Check banned status first
+                # Check banned status first with high accuracy
                 try:
                     async with self.session.get(f'https://t.me/{username}') as response:
                         page_text = await response.text()
-                        if "This account has been banned for" in page_text:
-                            logger.error(f'@{username} 🚫 Username telah dibanned')
-                            return None
+
+                        # Multiple indicators untuk status banned
+                        banned_indicators = [
+                            "This account has been banned",
+                            "was banned by Telegram",
+                            "banned for violating",
+                            "account is no longer available"
+                        ]
+
+                        # Check multiple indicators dengan retry
+                        for _ in range(2):  # Try twice untuk konfirmasi
+                            is_banned = any(indicator in page_text for indicator in banned_indicators)
+                            if is_banned:
+                                # Double check dengan request kedua
+                                async with self.session.get(f'https://t.me/{username}') as second_response:
+                                    second_text = await second_response.text()
+                                    second_check = any(indicator in second_text for indicator in banned_indicators)
+
+                                    if second_check:  # Konfirmasi banned status
+                                        logger.error(f'@{username} 🚫 Username telah dibanned (Confirmed)')
+                                        return None
+                                    await asyncio.sleep(1)  # Brief delay antara checks
+
+                            await asyncio.sleep(1)  # Delay before retry
+
                 except Exception as e:
                     logger.error(f"Error checking banned status for {username}: {str(e)}")
-                    return None  # Return None if we can't verify banned status
+                    # Dalam kasus error, lebih baik menganggap username tidak tersedia
+                    return None
 
                 cached_result = await self._get_cached_result(username)
                 if cached_result is not None:
