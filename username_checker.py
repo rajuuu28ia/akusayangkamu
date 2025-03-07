@@ -168,26 +168,22 @@ class TelegramUsernameChecker:
                                     second_check = any(indicator.lower() in second_text.lower() for indicator in banned_indicators)
 
                                     if second_check:  # Konfirmasi banned status
-                                        logger.error(f'@{username} 🚫 Username telah dibanned (Confirmed)')
-                                        return None
+                                        logger.error(f'@{username} 🚫 Username telah dibanned')
+                                        return None  # Return None immediately if banned
 
-                                    # If second check fails, wait and try one more time
-                                    await asyncio.sleep(1)
-                                    async with self.session.get(f'https://t.me/{username}') as third_response:
-                                        third_text = await third_response.text()
-                                        third_check = any(indicator.lower() in third_text.lower() for indicator in banned_indicators)
+                                # If second check fails, wait and try one more time
+                                await asyncio.sleep(1)
+                                async with self.session.get(f'https://t.me/{username}') as third_response:
+                                    third_text = await third_response.text()
+                                    third_check = any(indicator.lower() in third_text.lower() for indicator in banned_indicators)
 
-                                        if third_check:  # Final confirmation
-                                            logger.error(f'@{username} 🚫 Username telah dibanned (Triple Confirmed)')
-                                            return None
-
-                            if retry < 2:  # Don't sleep on last iteration
-                                await asyncio.sleep(1)  # Delay before next retry
+                                    if third_check:  # Final confirmation
+                                        logger.error(f'@{username} 🚫 Username telah dibanned')
+                                        return None  # Return None immediately if banned
 
                 except Exception as e:
                     logger.error(f"Error checking banned status for {username}: {str(e)}")
-                    # Jika ada error dalam pengecekan, assume username tidak tersedia
-                    return None
+                    return None  # Return None if we can't verify banned status
 
                 # Only proceed if not banned
                 cached_result = await self._get_cached_result(username)
