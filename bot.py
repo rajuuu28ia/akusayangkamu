@@ -241,22 +241,31 @@ async def handle_allusn(message: Message):
         # Generate variants based on type
         all_variants = [base_name]  # Start with base name
 
+        # Generate basic variations that are shared between types
+        sop_variants = UsernameGenerator.sop(base_name)
+        canon_variants = UsernameGenerator.canon(base_name)
+        scanon_variants = UsernameGenerator.scanon(base_name)
+        tamhur_variants = UsernameGenerator.tamhur(base_name)
+        switch_variants = UsernameGenerator.switch(base_name)
+        kurkuf_variants = UsernameGenerator.kurkuf(base_name)
+        ganhur_variants = UsernameGenerator.ganhur(base_name)
+
         if is_mulchar:
-            # Mulchar: only allowed methods
+            # Mulchar: only allowed methods in priority order
             logger.info(f"Generating variations for mulchar: {base_name}")
-            all_variants.extend(UsernameGenerator.tamhur(base_name))  # Priority 1
-            all_variants.extend(UsernameGenerator.switch(base_name))  # Priority 2
-            all_variants.extend(UsernameGenerator.kurkuf(base_name))  # Priority 3
+            all_variants.extend(tamhur_variants)  # Priority 1
+            all_variants.extend(switch_variants)  # Priority 2
+            all_variants.extend(kurkuf_variants)  # Priority 3
         else:
             # Regular username: all methods
             logger.info(f"Generating variations for regular username: {base_name}")
-            all_variants.extend(UsernameGenerator.sop(base_name))
-            all_variants.extend(UsernameGenerator.canon(base_name))
-            all_variants.extend(UsernameGenerator.scanon(base_name))
-            all_variants.extend(UsernameGenerator.tamhur(base_name))
-            all_variants.extend(UsernameGenerator.ganhur(base_name))
-            all_variants.extend(UsernameGenerator.switch(base_name))
-            all_variants.extend(UsernameGenerator.kurkuf(base_name))
+            all_variants.extend(sop_variants)
+            all_variants.extend(canon_variants)
+            all_variants.extend(scanon_variants)
+            all_variants.extend(tamhur_variants)
+            all_variants.extend(ganhur_variants)
+            all_variants.extend(switch_variants)
+            all_variants.extend(kurkuf_variants)
 
         # Remove duplicates while preserving order
         all_variants = list(dict.fromkeys(all_variants))
@@ -294,23 +303,23 @@ async def handle_allusn(message: Message):
                     available_usernames["op"].append(username)
                 elif is_mulchar:
                     # Mulchar categorization
-                    if username in UsernameGenerator.tamhur(base_name):
+                    if username in tamhur_variants:
                         available_usernames["tamhur"].append(username)
-                    elif username in UsernameGenerator.switch(base_name):
+                    elif username in switch_variants:
                         available_usernames["switch"].append(username)
-                    elif username in UsernameGenerator.kurkuf(base_name):
+                    elif username in kurkuf_variants:
                         available_usernames["kurhuf"].append(username)
                 else:
                     # Regular username categorization
-                    if username in UsernameGenerator.sop(base_name):
+                    if username in sop_variants:
                         available_usernames["sop"].append(username)
-                    elif username in UsernameGenerator.canon(base_name) or username in UsernameGenerator.scanon(base_name):
+                    elif username in canon_variants or username in scanon_variants:
                         available_usernames["canon_scanon"].append(username)
-                    elif username in UsernameGenerator.tamhur(base_name):
+                    elif username in tamhur_variants:
                         available_usernames["tamhur"].append(username)
-                    elif username in UsernameGenerator.ganhur(base_name) or username in UsernameGenerator.switch(base_name):
+                    elif username in ganhur_variants or username in switch_variants:
                         available_usernames["ganhur_switch"].append(username)
-                    elif username in UsernameGenerator.kurkuf(base_name):
+                    elif username in kurkuf_variants:
                         available_usernames["kurhuf"].append(username)
 
             # Format results with appropriate categories
