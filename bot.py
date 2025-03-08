@@ -347,7 +347,7 @@ async def handle_allusn(message: Message):
                     found_any = True
                     result_text += f"{categories[category]}:\n"
                     for username in usernames[:3]:  # Limit to 3 per category
-                        result_text += f"• {username}\n"
+                        result_text += f"• ﹫{username}\n"
                     result_text += "\n"
 
             if found_any:
