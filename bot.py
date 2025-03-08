@@ -31,14 +31,11 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
-# Update TOKEN at the top of the file
-TOKEN = "7894481490:AAEnGy_Pydm72b79Cuxuq6gi6cW5oR3RCQo" #This line was added from edited snippet
+# Replace the TOKEN section with environment variable approach
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    TOKEN = "7894481490:AAEPaAkWj9hnGU5xVHbtU4SzmBB2NWNUZPU"
 
-
-# Get token from environment variable with fallback
-#TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-#if not TOKEN:
-#    raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
