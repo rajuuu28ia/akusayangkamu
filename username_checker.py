@@ -6,6 +6,7 @@ import json
 import os
 import time
 from lxml import html
+from typing import Optional, Dict, Set
 from config import RESERVED_WORDS
 
 # Set up logging
@@ -17,17 +18,19 @@ PREMIUM_USER = 'This account is already subscribed to Telegram Premium.'
 CHANNEL = 'Please enter a username assigned to a user.'
 NOT_FOUND = 'No Telegram users found.'
 
-# Global rate limit semaphore - increased for more concurrent requests
-GLOBAL_SEMAPHORE = asyncio.Semaphore(30)  # Maximum 30 concurrent requests total
+# Cache TTL in seconds
+CACHE_TTL = 3600  # 1 hour
 
 class TelegramUsernameChecker:
     def __init__(self):
         self.session = aiohttp.ClientSession()
-        self.rate_semaphore = asyncio.Semaphore(5)  # Increased from 3 to 5
+        self.rate_semaphore = asyncio.Semaphore(5)
         self.last_request_time = 0
-        self.base_delay = 1  # Reduced delay from 3 to 1 second
-        self._cache = {}  # Simple cache for username results
-        self._cache_ttl = 300  # Cache TTL in seconds (5 minutes)
+        self.base_delay = 1
+
+        # Cache structures
+        self._username_cache: Dict[str, tuple] = {}  # (result, timestamp)
+        self._banned_cache: Set[str] = set()
         self._last_check_time = time.time()
         self._check_count = 0
 
@@ -35,21 +38,129 @@ class TelegramUsernameChecker:
         self.api_id = os.getenv("TELEGRAM_API_ID")
         self.api_hash = os.getenv("TELEGRAM_API_HASH")
 
-        if not all([self.api_id, self.api_hash]):
-            logger.warning("Telegram API credentials not found. Some features may be limited.")
+        # Comprehensive banned indicators
+        self.banned_indicators = [
+            # Direct ban indicators
+            "This account has been banned",
+            "was banned by Telegram",
+            "banned for violating",
+            "account has been deleted",
+            "account is no longer available",
+            "account has been terminated",
+            "This account has been restricted",
+            "This account has been terminated",
+            "has been banned",
+            "was banned by the Telegram team",
+            # Additional indicators
+            "This account is not accessible",
+            "violating Telegram's Terms of Service",
+            "permanently removed",
+            "account suspended",
+            # Regex patterns for ban messages
+            r"@\w+ (?:was|has been) (?:banned|terminated|suspended)",
+            r"(?:banned|terminated|suspended) for (?:spam|scam|abuse)",
+        ]
 
-    async def _get_cached_result(self, username: str) -> bool:
-        """Get cached result if available and not expired"""
-        if username in self._cache:
-            result, timestamp = self._cache[username]
-            if timestamp + self._cache_ttl > time.time():
-                return result
-            del self._cache[username]
-        return None
+    async def _check_response_headers(self, response: aiohttp.ClientResponse) -> bool:
+        """Check response headers for ban indicators"""
+        if response.status in [403, 404]:
+            return True
 
-    def _cache_result(self, username: str, result: bool) -> None:
-        """Cache username check result"""
-        self._cache[username] = (result, time.time())
+        # Check specific headers that might indicate banned status
+        headers = response.headers
+        if headers.get('X-Robot-Tag') == 'banned' or \
+           headers.get('X-Account-Status') == 'suspended':
+            return True
+
+        return False
+
+    async def _check_banned_patterns(self, text: str) -> bool:
+        """Check text content for ban patterns"""
+        text_lower = text.lower()
+
+        # Check exact matches
+        for indicator in self.banned_indicators:
+            if not indicator.startswith('r"'):
+                if indicator.lower() in text_lower:
+                    return True
+
+        # Check regex patterns
+        regex_patterns = [ind[2:-1] for ind in self.banned_indicators if ind.startswith('r"')]
+        for pattern in regex_patterns:
+            if re.search(pattern, text_lower, re.IGNORECASE):
+                return True
+
+        return False
+
+    async def _verify_with_api(self, username: str) -> Optional[bool]:
+        """Secondary verification using API"""
+        try:
+            api_url = await self.get_api_url()
+            if not api_url:
+                return None
+
+            params = {'username': username}
+            headers = {
+                'X-Api-Id': self.api_id,
+                'X-Api-Hash': self.api_hash
+            }
+
+            async with self.session.get(
+                f'https://api.telegram.org/bot{self.api_id}/getChat',
+                params=params,
+                headers=headers
+            ) as response:
+                if response.status == 403:  # Forbidden - likely banned
+                    return True
+
+                data = await response.json()
+                return bool(data.get('error_code') in [400, 403])
+
+        except Exception as e:
+            logger.error(f"API verification error for {username}: {e}")
+            return None
+
+    async def is_username_banned(self, username: str) -> bool:
+        """
+        Multi-layer verification for banned usernames
+        Returns True if username is banned, False if definitely not banned,
+        None if status couldn't be determined
+        """
+        # Check cache first
+        if username in self._banned_cache:
+            return True
+
+        try:
+            # Layer 1: Main webpage check
+            async with self.session.get(f'https://t.me/{username}') as response:
+                # Check response headers
+                if await self._check_response_headers(response):
+                    self._banned_cache.add(username)
+                    return True
+
+                page_text = await response.text()
+
+                # Check for ban patterns in page content
+                if await self._check_banned_patterns(page_text):
+                    # Double verify with second request
+                    await asyncio.sleep(1)
+                    async with self.session.get(f'https://t.me/{username}') as second_response:
+                        second_text = await second_response.text()
+                        if await self._check_banned_patterns(second_text):
+                            self._banned_cache.add(username)
+                            return True
+
+            # Layer 2: API verification
+            api_result = await self._verify_with_api(username)
+            if api_result:
+                self._banned_cache.add(username)
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking banned status for {username}: {e}")
+            return False
 
     async def get_api_url(self):
         """Get Fragment API URL with improved caching"""
@@ -125,7 +236,7 @@ class TelegramUsernameChecker:
                     logger.error(f"Error checking web user {username}: {str(e)}")
                     return False
 
-    async def check_fragment_api(self, username, count=6):
+    async def check_fragment_api(self, username: str, count=6) -> Optional[bool]:
         """Check username availability using Fragment API with improved timeout"""
         try:
             # Add timeout for entire operation
@@ -137,51 +248,9 @@ class TelegramUsernameChecker:
                 self._last_check_time = current_time
 
                 # Check banned status first with high accuracy
-                try:
-                    async with self.session.get(f'https://t.me/{username}') as response:
-                        page_text = await response.text()
-
-                        # Multiple indicators untuk status banned
-                        banned_indicators = [
-                            "This account has been banned",
-                            "was banned by Telegram",
-                            "banned for violating",
-                            "account has been deleted",
-                            "account is no longer available",
-                            "account has been terminated",
-                            "This account has been restricted",
-                            "This account has been terminated",
-                            "has been banned",
-                            "was banned by the Telegram team"
-                        ]
-
-                        # Check multiple indicators dengan retry
-                        for retry in range(3):  # Increase retries to 3
-                            # Check semua indicators
-                            is_banned = any(indicator.lower() in page_text.lower() for indicator in banned_indicators)
-
-                            if is_banned:
-                                # Double check dengan request kedua
-                                await asyncio.sleep(1)  # Brief delay before second check
-                                async with self.session.get(f'https://t.me/{username}') as second_response:
-                                    second_text = await second_response.text()
-                                    second_check = any(indicator.lower() in second_text.lower() for indicator in banned_indicators)
-
-                                    if second_check:  # Jika banned terdeteksi pada check kedua
-                                        return None  # Stop disini, jangan lanjutkan proses
-
-                                    # If second check fails, try one more time
-                                    await asyncio.sleep(1)
-                                    async with self.session.get(f'https://t.me/{username}') as third_response:
-                                        third_text = await third_response.text()
-                                        third_check = any(indicator.lower() in third_text.lower() for indicator in banned_indicators)
-
-                                        if third_check:  # Final confirmation
-                                            return None  # Stop disini, jangan lanjutkan proses
-
-                except Exception as e:
-                    logger.error(f"Error checking banned status for {username}: {str(e)}")
-                    return None  # Return None if we can't verify banned status
+                if await self.is_username_banned(username):
+                    logger.error(f'@{username} ❌ Account Banned')
+                    return None
 
                 # Only proceed if definitely not banned
                 cached_result = await self._get_cached_result(username)
@@ -299,6 +368,24 @@ class TelegramUsernameChecker:
             return None
 
 
+    async def _get_cached_result(self, username: str) -> bool:
+        """Get cached result if available and not expired"""
+        if username in self._username_cache:
+            result, timestamp = self._username_cache[username]
+            if timestamp + CACHE_TTL > time.time():
+                return result
+            del self._username_cache[username]
+        return None
+
+    def _cache_result(self, username: str, result: bool) -> None:
+        """Cache username check result"""
+        self._username_cache[username] = (result, time.time())
+
+    async def close(self):
+        """Close the aiohttp session"""
+        if not self.session.closed:
+            await self.session.close()
+
 async def check_telegram_username(username: str) -> bool:
     """Check if a Telegram username is available"""
     if not re.match(r'^[a-zA-Z0-9_]{5,32}$', username):
@@ -312,9 +399,12 @@ async def check_telegram_username(username: str) -> bool:
     checker = TelegramUsernameChecker()
     try:
         result = await checker.check_fragment_api(username.lower())
-        await checker.session.close()
+        await checker.close()
         return bool(result)
     except Exception as e:
         logger.error(f"Error in check_telegram_username: {str(e)}")
-        await checker.session.close()
+        await checker.close()
         return False
+
+# Global rate limit semaphore - increased for more concurrent requests
+GLOBAL_SEMAPHORE = asyncio.Semaphore(30)  # Maximum 30 concurrent requests total
