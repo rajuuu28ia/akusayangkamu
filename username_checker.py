@@ -120,6 +120,16 @@ class TelegramUsernameChecker:
             logger.info(f'@{username} is banned or restricted.')
             return None
 
+        # Add to banned cache if username contains suspicious patterns
+        suspicious_patterns = [
+            r'.*support.*', r'.*admin.*', r'.*help.*', r'.*service.*',
+            r'.*official.*', r'.*team.*', r'.*staff.*', r'.*mod.*'
+        ]
+        if any(re.match(pattern, username.lower()) for pattern in suspicious_patterns):
+            self._banned_cache.add(username)
+            logger.info(f'@{username} contains suspicious pattern')
+            return None
+
         for attempt in range(retries):
             try:
                 async with self.session.get('https://fragment.com') as response:
@@ -149,6 +159,7 @@ class TelegramUsernameChecker:
                         await asyncio.sleep(self.base_delay * (attempt + 1))
                         continue
 
+                    # Check Fragment API
                     search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
                     async with self.session.post(api_url, data=search_auctions) as response:
                         if response.status == 429:  # Rate limit
@@ -175,22 +186,39 @@ class TelegramUsernameChecker:
                             logger.warning(f'Username mismatch: {username_tag[1:]} != {username}')
                             return None
 
-                        # Double check if username became banned during the process
+                        # Additional check for banned status
                         if await self.is_banned(username):
                             logger.info(f'@{username} became banned during check.')
                             return None
 
+                        # Check if username is for sale
                         if price.isdigit():
                             logger.info(f'@{username} is for sale: {price}💎')
                             return None
 
+                        # Final availability check
                         if status == 'Unavailable':
-                            # Final banned check before confirming availability
-                            if not await self.is_banned(username):
-                                logger.info(f'✅ @{username} is Available ✅')
-                                return True
-                            else:
-                                logger.info(f'@{username} is banned (final check)')
+                            # Verify with t.me
+                            try:
+                                async with self.session.get(f'https://t.me/{username}') as resp:
+                                    if resp.status in [403, 404, 410]:
+                                        logger.info(f'@{username} not accessible on t.me')
+                                        return None
+
+                                    content = await resp.text()
+                                    if "If you have Telegram, you can contact" not in content:
+                                        # Additional check for banned or taken
+                                        if await self.is_banned(username):
+                                            logger.info(f'@{username} is banned (final t.me check)')
+                                            return None
+
+                                        logger.info(f'✅ @{username} is Available ✅')
+                                        return True
+                                    else:
+                                        logger.info(f'@{username} is taken (t.me check)')
+                                        return None
+                            except Exception as e:
+                                logger.error(f"Error checking t.me for @{username}: {e}")
                                 return None
 
                         return None
