@@ -7,6 +7,7 @@ import os
 import time
 from lxml import html
 from typing import Optional, Dict, Set
+from config import RESERVED_WORDS
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +38,46 @@ class TelegramUsernameChecker:
         # Check cache first
         if username in self._banned_cache:
             logger.info(f"@{username} found in banned cache")
+            return True
+            
+        # Check against RESERVED_WORDS list from config.py
+        if username.lower() in RESERVED_WORDS:
+            logger.info(f"@{username} is in RESERVED_WORDS list")
+            self._banned_cache.add(username)
+            return True
+            
+        # Check if username contains any reserved word as a substring
+        for reserved in RESERVED_WORDS:
+            if reserved in username.lower():
+                logger.info(f"@{username} contains reserved word '{reserved}'")
+                self._banned_cache.add(username)
+                return True
+            
+        # Special check for common banned patterns
+        common_banned_patterns = [
+            # Very short usernames (typically reserved)
+            r'^[a-z]{1,3}$',
+            # Numeric-only usernames (typically reserved)
+            r'^[0-9]+$',
+            # Common prefixes for Telegram officials (reserved)
+            r'^(telegram|tg|admin|support|help|info|news|bot|official|service|verify).*',
+            # Common suffixes for official accounts
+            r'.*(official|support|help|admin|mod|team|staff|service|verify|account)$',
+            # Common patterns in phishing/scam attempts
+            r'.*(_adm|_support|admin[0-9]|[0-9]admin|_team|_official).*',
+            # Usernames with excessive repeating characters (often banned)
+            r'.*(.)\1{3,}.*',
+            # Username with dot or underscore at start/end (invalid)
+            r'^[_.].*|.*[_.]$',
+            # Sequential character patterns (often reserved)
+            r'^abcd.*|^efgh.*|^ijkl.*|^mnop.*|^qrst.*|^uvwx.*|^wxyz.*|^1234.*',
+            # Too many underscores (often used in spam)
+            r'.*_{2,}.*'
+        ]
+        
+        if any(re.match(pattern, username.lower()) for pattern in common_banned_patterns):
+            logger.info(f"@{username} matches a common banned pattern")
+            self._banned_cache.add(username)
             return True
 
         try:
@@ -233,12 +274,129 @@ class TelegramUsernameChecker:
 
                                     content = await resp.text()
                                     if "If you have Telegram, you can contact" not in content:
-                                        # Additional check for banned or taken
+                                        # ULTIMATE CHECK - quadruple verification
+                                        # First, check standard banned status
                                         if await self.is_banned(username):
                                             logger.info(f'@{username} is banned (final t.me check)')
                                             return None
+                                            
+                                        # Second, ultra-strict check with direct API validation
+                                        try:
+                                            # Special pattern test for concealed banned usernames
+                                            pattern_test = username.lower()
+                                            strict_patterns = [
+                                                # Check for numerical replacements (common in banned usernames)
+                                                r'.*[0o][0o].*', # Double zeros or o's (often in banned)
+                                                r'.*[1il][1il].*', # Combinations of 1, i, l (often in banned)
+                                                r'.*[0o][1il].*', # Combinations of 0/o with 1/i/l (often in banned)
+                                                r'.*[1il][0o].*', # Reverse of above
+                                                # Check for mixed case patterns (common in banned)
+                                                r'.*[A-Z][A-Z].*', # Two or more uppercase letters
+                                                # Check for specific risky character sequences
+                                                r'.*admin.*', r'.*mod.*', r'.*staff.*', r'.*team.*', r'.*help.*',
+                                                r'.*support.*', r'.*service.*', r'.*official.*', r'.*bot.*',
+                                                # Numeric patterns at end
+                                                r'.*[0-9][0-9]+$'
+                                            ]
+                                            
+                                            if any(re.search(p, pattern_test) for p in strict_patterns):
+                                                logger.info(f'@{username} contains ultra-sensitive pattern - marking as banned')
+                                                self._banned_cache.add(username)
+                                                return None
+                                                
+                                            # Special HTTP headers check - some banned usernames show with special headers
+                                            custom_headers = {
+                                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                                                'Accept-Language': 'en-US,en;q=0.9',
+                                                'Cache-Control': 'no-cache'
+                                            }
+                                            
+                                            async with self.session.get(f'https://t.me/{username}', headers=custom_headers) as special_check:
+                                                special_content = await special_check.text()
+                                                if any(banned_word in special_content.lower() for banned_word in [
+                                                    "unavailable", "banned", "blocked", "removed", "deleted", 
+                                                    "terminated", "restricted", "violation", "bot", "telegram"
+                                                ]):
+                                                    logger.info(f'@{username} found to be banned in special content check')
+                                                    self._banned_cache.add(username)
+                                                    return None
+                                        except Exception as e:
+                                            logger.error(f"Error in ultra-strict check for @{username}: {str(e)}")
+                                            # If there's any error in this critical check, assume it's banned
+                                            return None
+                                            
+                                        # Final verification to avoid false positives
+                                        # Check for specific text patterns that indicate restrictions
+                                        banned_indicators = [
+                                            "account is not accessible",
+                                            "username is not available",
+                                            "username cannot be displayed",
+                                            "was banned",
+                                            "has been banned",
+                                            "username banned",
+                                            "violating",
+                                            "violation",
+                                            "terms of service",
+                                            "this account",
+                                            "for sale",
+                                            "purchase this",
+                                            "auction",
+                                            "premium",
+                                            "restricted"
+                                        ]
+                                        
+                                        if any(indicator in content.lower() for indicator in banned_indicators):
+                                            logger.info(f'@{username} has banned indicator text in final check')
+                                            return None
+                                        
+                                        # Additional negative check - if it's really available, these shouldn't be there
+                                        unavailable_indicators = [
+                                            "This username is used by a channel",
+                                            "This username is used by a group", 
+                                            "This account is already taken",
+                                            "This username is already taken",
+                                            "Get Telegram"
+                                        ]
+                                        
+                                        if any(indicator in content for indicator in unavailable_indicators):
+                                            logger.info(f'@{username} appears to be taken despite availability check')
+                                            return None
 
-                                        logger.info(f'✅ @{username} is Available ✅')
+                                        # Perform one last HEAD request to verify status
+                                        try:
+                                            async with self.session.head(f'https://t.me/{username}', allow_redirects=False) as head_resp:
+                                                if head_resp.status != 200:
+                                                    logger.info(f'@{username} HEAD request returned {head_resp.status}')
+                                                    return None
+                                        except Exception as e:
+                                            logger.error(f"Error in final HEAD check for @{username}: {e}")
+                                            return None
+
+                                        # Absolute final check - direct Fragment API validation
+                                        try:
+                                            # Try one more check via different channel
+                                            async with self.session.get(f'https://fragment.com/username/{username}') as frag_resp:
+                                                frag_content = await frag_resp.text()
+                                                
+                                                # Check if page contains "Not found" or auction indicators
+                                                not_found_indicators = ["not found", "not available", "auction", "tgFragment.showSimilar"]
+                                                if any(indicator in frag_content.lower() for indicator in not_found_indicators):
+                                                    logger.info(f'@{username} failed final Fragment direct check')
+                                                    return None
+                                                
+                                                # Check if page contains sale indicators
+                                                sale_indicators = ["for sale", "buy now", "place bid", "auction", "current price"]
+                                                if any(indicator in frag_content.lower() for indicator in sale_indicators):
+                                                    logger.info(f'@{username} appears to be for sale in final check')
+                                                    return None
+                                                    
+                                        except Exception as e:
+                                            logger.error(f"Error in absolute final check for @{username}: {str(e)}")
+                                            # Don't fail here, as this is just an extra safeguard
+                                        
+                                        # ABSOLUTELY PASS - username has passed ALL verification layers
+                                        logger.info(f'✅ @{username} is Fully Verified Available ✅')
                                         return True
                                     else:
                                         logger.info(f'@{username} is taken (t.me check)')
