@@ -9,4 +9,5 @@ dependencies = [
     "flask>=3.1.0",
     "lxml>=5.3.1",
     "python-dotenv>=1.0.1",
+    "telethon>=1.39.0",
 ]

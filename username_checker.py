@@ -7,8 +7,9 @@ import os
 import time
 import math
 from lxml import html
-from typing import Optional, Dict, Set
+from typing import Optional, Dict, Set, Union
 from config import RESERVED_WORDS
+from telethon import TelegramClient, functions, errors
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -393,69 +394,32 @@ class TelegramUsernameChecker:
                                         # Hapus semua checkings ban yang tidak eksplisit
                                         # Sekarang kita akan menghentikan pemeriksaan indikator ban di sini
                                         
-                                        # Additional negative check - if it's really available, these shouldn't be there
+                                        # Hanya cek indikator yang sangat spesifik dan pasti
                                         unavailable_indicators = [
                                             "This username is used by a channel",
-                                            "This username is used by a group", 
-                                            "This account is already taken",
-                                            "This username is already taken",
-                                            "Get Telegram"
+                                            "This username is used by a group"
                                         ]
                                         
                                         if any(indicator in content for indicator in unavailable_indicators):
-                                            logger.info(f'@{username} appears to be taken despite availability check')
+                                            logger.info(f'@{username} appears to be used by a channel or group')
                                             return None
 
-                                        # Perform one last HEAD request to verify status
-                                        try:
-                                            async with self.session.head(f'https://t.me/{username}', allow_redirects=False) as head_resp:
-                                                if head_resp.status != 200:
-                                                    logger.info(f'@{username} HEAD request returned {head_resp.status}')
-                                                    return None
-                                        except Exception as e:
-                                            logger.error(f"Error in final HEAD check for @{username}: {e}")
-                                            return None
+                                        # Hapus HEAD request check - menyebabkan terlalu banyak false positive
 
                                         # Ultimate PARANOIA checks - the most extreme filtering possible
                                         
                                         # Final verification yang lebih terfokus - hanya periksa hal paling penting
                                         
-                                        # Fragment API validation untuk username premium
-                                        try:
-                                            async with self.session.get(f'https://fragment.com/username/{username}') as frag_resp:
-                                                frag_content = await frag_resp.text()
-                                                
-                                                # Hanya indikator kritis - jual beli username
-                                                sale_indicators = [
-                                                    "for sale", "buy now", "place bid", "auction", "current price"
-                                                ]
-                                                
-                                                if any(indicator in frag_content.lower() for indicator in sale_indicators):
-                                                    logger.info(f'@{username} appears to be for sale in final check')
-                                                    return None
-                                                    
-                                        except Exception as e:
-                                            logger.error(f"Error in final Fragment check for @{username}: {str(e)}")
-                                            # Tidak gagal pada error, hanya log
+                                        # HAPUS PEMERIKSAAN FRAGMENT API YANG MENYEBABKAN FALSE POSITIVES
+                                        # Fragment API terlalu sering mengembalikan halaman yang berisi teks umum yang 
+                                        # menyebabkan false positive
                                         
-                                        # Verifikasi dasar dengan user agent berbeda
-                                        try:
-                                            mobile_headers = {
-                                                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15'
-                                            }
-                                            
-                                            async with self.session.get(f'https://t.me/{username}', 
-                                                                        headers=mobile_headers, 
-                                                                        allow_redirects=True) as mobile_resp:
-                                                
-                                                # Hanya cek error status
-                                                if mobile_resp.status >= 400:
-                                                    logger.info(f'@{username} failed with error status {mobile_resp.status}')
-                                                    return None
-                                                
-                                        except Exception as e:
-                                            logger.error(f"Error in final check for @{username}: {str(e)}")
-                                            # Tidak gagal pada error, hanya log
+                                        # Kita akan mengandalkan pemeriksaan dari API Fragment yang dilakukan sebelumnya
+                                        # yang lebih akurat (dalam if price.isdigit() check)
+                                        
+                                        # Hapus verifikasi tambahan ini
+                                        # Setiap pemeriksaan tambahan meningkatkan false positive
+                                        # Jika sampai di sini, assume username tersedia
                                         
                                         # PASS - Username telah lulus semua verifikasi wajib
                                         logger.info(f'✅ @{username} is Verified Available ✅')
