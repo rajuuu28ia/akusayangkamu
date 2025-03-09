@@ -126,46 +126,18 @@ class TelegramUsernameChecker:
                         self._banned_cache.add(username)
                         return True
         
-        # --- LEVEL 3: PATTERN MATCHING (EXTREME) ---
+        # --- LEVEL 3: PATTERN MATCHING (Sangat Minimal) ---
             
-        # EXTREME pattern matching - paranoid level
+        # Pola yang sangat MINIMAL untuk username terlarang
         banned_patterns = [
-            # Very short usernames (typically reserved)
-            r'^[a-z]{1,5}$',
-            # Numeric-only usernames (reserved)
+            # Hanya Numeric (angka saja)
             r'^[0-9]+$',
-            # Common prefixes for Telegram officials (reserved) - CRITICAL ONLY
-            r'^(telegram|admin|support|help|bot|official|mod).*',
             
-            # Common suffixes for official accounts - CRITICAL ONLY
-            r'.*(official|support|admin|mod|team|staff)$',
+            # Hanya untuk Telegram officials yang SANGAT jelas
+            r'^(telegram|admin)$',  # Hanya username yang persis sama dengan kata-kata ini
             
-            # Common patterns in phishing/scam attempts - CRITICAL ONLY
-            r'.*(_adm|_support|_admin|admin[0-9]|[0-9]admin|_team|_official).*',
-            
-            # Usernames with excessive repeating characters (often banned)
-            r'.*(.)\1{3,}.*',  # 4+ of same character (menos estrito)
-            
-            # Username with special characters (invalid or suspicious)
-            r'^[_.].*|.*[_.]$', # Apenas inicio e fim com caracteres especiais
-            
-            # Character-digit substitution patterns for sensitive words only
-            r'.*(adm[1il]n|supp[0o]rt|[0o]ff[1il]c[1il]al|m[0o]derat[0o]r).*',
-            
-            # Official-sounding names - KRITICAL ONLY
-            r'^.*admin.*$', r'^.*support.*$', r'^.*official.*$', r'^.*telegram.*$', 
-            r'^.*moderator.*$', r'^.*staff.*$',
-            
-            # Brand names - KRITICAL ONLY 
-            r'^.*(apple|google|meta|facebook|instagram|whatsapp).*$',
-            
-            # Explicit content- KRITICAL ONLY
-            r'^.*(porn|xxx|sex).*$',
-            
-            # Common pattern replacements for sensitive terms only
-            r'.*[aA][dD][mM][iI][nN].*',  # admin with exact case variations
-            r'.*[sS][uU][pP][pP][oO][rR][tT].*',  # support with exact case variations
-            r'.*[oO][fF][fF][iI][cC][iI][aA][lL].*'  # official with exact case variations
+            # Username dengan special characters yang dilarang Telegram
+            r'^[_.].*|.*[_.]$'  # Hanya username yang dimulai atau diakhiri dengan _ atau .
         ]
         
         for pattern in banned_patterns:
@@ -397,43 +369,19 @@ class TelegramUsernameChecker:
                                             
                                         # Second, ultra-strict check with direct API validation
                                         try:
-                                            # Special pattern test for concealed banned usernames
-                                            pattern_test = username.lower()
-                                            strict_patterns = [
-                                                # Check for numerical replacements (common in banned usernames)
-                                                r'.*[0o][0o].*', # Double zeros or o's (often in banned)
-                                                r'.*[1il][1il].*', # Combinations of 1, i, l (often in banned)
-                                                r'.*[0o][1il].*', # Combinations of 0/o with 1/i/l (often in banned)
-                                                r'.*[1il][0o].*', # Reverse of above
-                                                # Check for mixed case patterns (common in banned)
-                                                r'.*[A-Z][A-Z].*', # Two or more uppercase letters
-                                                # Check for specific risky character sequences
-                                                r'.*admin.*', r'.*mod.*', r'.*staff.*', r'.*team.*', r'.*help.*',
-                                                r'.*support.*', r'.*service.*', r'.*official.*', r'.*bot.*',
-                                                # Numeric patterns at end
-                                                r'.*[0-9][0-9]+$'
-                                            ]
+                                            # HAPUS SEMUA SPECIAL PATTERN TEST - terlalu ketat
                                             
-                                            if any(re.search(p, pattern_test) for p in strict_patterns):
-                                                logger.info(f'@{username} contains ultra-sensitive pattern - marking as banned')
-                                                self._banned_cache.add(username)
-                                                return None
-                                                
-                                            # Special HTTP headers check - some banned usernames show with special headers
+                                            # Special HTTP headers check - dengan kriteria sangat minim
                                             custom_headers = {
-                                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                                                'Accept-Language': 'en-US,en;q=0.9',
-                                                'Cache-Control': 'no-cache'
+                                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                                             }
                                             
                                             async with self.session.get(f'https://t.me/{username}', headers=custom_headers) as special_check:
                                                 special_content = await special_check.text()
-                                                if any(banned_word in special_content.lower() for banned_word in [
-                                                    "unavailable", "banned", "blocked", "removed", "deleted", 
-                                                    "terminated", "restricted", "violation", "bot", "telegram"
-                                                ]):
-                                                    logger.info(f'@{username} found to be banned in special content check')
+                                                # Hanya periksa kata-kata kunci banned yang SANGAT SPESIFIK
+                                                if "this account has been banned" in special_content.lower() or \
+                                                   "this username has been banned" in special_content.lower():
+                                                    logger.info(f'@{username} found to be explicitly banned in special content check')
                                                     self._banned_cache.add(username)
                                                     return None
                                         except Exception as e:
@@ -441,29 +389,9 @@ class TelegramUsernameChecker:
                                             # If there's any error in this critical check, assume it's banned
                                             return None
                                             
-                                        # Final verification to avoid false positives
-                                        # Check for specific text patterns that indicate restrictions
-                                        banned_indicators = [
-                                            "account is not accessible",
-                                            "username is not available",
-                                            "username cannot be displayed",
-                                            "was banned",
-                                            "has been banned",
-                                            "username banned",
-                                            "violating",
-                                            "violation",
-                                            "terms of service",
-                                            "this account",
-                                            "for sale",
-                                            "purchase this",
-                                            "auction",
-                                            "premium",
-                                            "restricted"
-                                        ]
-                                        
-                                        if any(indicator in content.lower() for indicator in banned_indicators):
-                                            logger.info(f'@{username} has banned indicator text in final check')
-                                            return None
+                                        # Hapus semua banned indicators yang terlalu umum
+                                        # Hapus semua checkings ban yang tidak eksplisit
+                                        # Sekarang kita akan menghentikan pemeriksaan indikator ban di sini
                                         
                                         # Additional negative check - if it's really available, these shouldn't be there
                                         unavailable_indicators = [
