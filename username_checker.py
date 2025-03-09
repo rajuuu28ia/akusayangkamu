@@ -454,6 +454,44 @@ class TelegramUsernameChecker:
         except Exception as e:
             logger.error(f"Error checking web user {username}: {e}")
             return False
+            
+    async def check_username_with_telethon(self, username: str) -> Optional[bool]:
+        """
+        Gunakan Telethon API untuk memeriksa ketersediaan username
+        
+        Returns:
+            True: jika username tersedia
+            False: jika username tidak tersedia
+            None: jika terjadi error
+        """
+        try:
+            # Buat client Telegram tanpa session (tidak perlu login untuk ini)
+            api_id = os.environ.get("TELEGRAM_API_ID")
+            api_hash = os.environ.get("TELEGRAM_API_HASH")
+            
+            if not api_id or not api_hash:
+                logger.warning("TELEGRAM_API_ID dan TELEGRAM_API_HASH tidak ditemukan, melewati pemeriksaan Telethon")
+                return None
+                
+            async with TelegramClient(None, api_id, api_hash) as client:
+                # Gunakan checkUsername API untuk memeriksa ketersediaan
+                try:
+                    result = await client(functions.account.CheckUsernameRequest(username=username))
+                    # True artinya username tersedia
+                    logger.info(f"Telethon API: @{username} {'tersedia' if result else 'tidak tersedia'}")
+                    return result
+                except errors.UsernameInvalidError:
+                    logger.info(f"Telethon API: @{username} tidak valid")
+                    return False
+                except errors.FloodWaitError as e:
+                    logger.error(f"Telethon API: Dibatasi karena rate limit untuk {e.seconds} detik")
+                    return None
+                except Exception as e:
+                    logger.error(f"Telethon API: Error saat check username @{username}: {e}")
+                    return None
+        except Exception as e:
+            logger.error(f"Error saat menginisialisasi Telethon client: {e}")
+            return None
 
     async def close(self):
         """Cleanup resources"""
