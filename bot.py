@@ -169,7 +169,7 @@ async def check_subscription(user_id: int) -> bool:
             logger.error(f"Alternative check failed: {str(e2)}")
             return False
 
-async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=5) -> dict:
+async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=10) -> dict:
     """Check a batch of usernames concurrently with improved monitoring and timeout"""
     results = {}
     tasks = []
@@ -212,7 +212,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
                         # Small delay between batches to avoid rate limits
                         if i + batch_size < len(usernames):
-                            delay = 2.0  # Increased delay between batches
+                            delay = 1.0  # Reduced delay between batches
                             logger.info(f"Waiting {delay}s before next batch...")
                             await asyncio.sleep(delay)
 
@@ -238,7 +238,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 # User queue system
 active_users = set()  # Currently processing users
 user_queue = deque()  # Waiting users
-MAX_CONCURRENT_USERS = 8
+MAX_CONCURRENT_USERS = 10  # Increased from 8 to 10
 
 async def process_queued_users():
     """Process users in queue when slots are available"""
