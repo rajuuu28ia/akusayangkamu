@@ -78,7 +78,7 @@ from aiogram.types import Message
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
-from username_checker import check_telegram_username, TelegramUsernameChecker
+from username_checker import TelegramUsernameChecker
 from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
