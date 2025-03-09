@@ -5,66 +5,16 @@ import glob
 import asyncio
 from datetime import datetime, timedelta
 
-# Log cleanup function
-async def periodic_log_cleanup():
-    """Periodically clean up old log files"""
-    while True:
-        try:
-            # Find all log files
-            log_files = glob.glob('bot.log*')
-            if not log_files:
-                await asyncio.sleep(3600)  # Sleep for 1 hour if no logs
-                continue
-
-            # Sort by modification time, newest first
-            log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-
-            # Keep only the most recent log file
-            for old_log in log_files[1:]:
-                try:
-                    os.remove(old_log)
-                    logger.info(f"Removed old log file: {old_log}")
-                except Exception as e:
-                    logger.error(f"Error removing log file {old_log}: {e}")
-
-        except Exception as e:
-            logger.error(f"Error during periodic log cleanup: {e}")
-
-        await asyncio.sleep(3600)  # Run every hour
-
-# Log cleanup function
-def cleanup_old_logs():
-    """Remove old log files except the most recent one"""
-    try:
-        # Find all log files
-        log_files = glob.glob('bot.log*')
-        if not log_files:
-            return
-
-        # Sort by modification time, newest first
-        log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-
-        # Keep only the most recent log file
-        for old_log in log_files[1:]:
-            try:
-                os.remove(old_log)
-                logger.info(f"Removed old log file: {old_log}")
-            except Exception as e:
-                logger.error(f"Error removing log file {old_log}: {e}")
-
-    except Exception as e:
-        logger.error(f"Error during log cleanup: {e}")
-
-# Update logging configuration with smaller file size
+# Enhanced logging setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG temporarily for more detailed logs
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.handlers.RotatingFileHandler(
             'bot.log',
             maxBytes=1000000,  # 1MB
-            backupCount=1  # Keep only one backup
+            backupCount=1
         )
     ]
 )
@@ -88,7 +38,6 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     TOKEN = "7894481490:AAFMTOf2oQdt6ujJ-cXs2k_g-WKglByDnTw"
 
-
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
 CHANNEL_ID = "-1002443114227"  # Fixed numeric format for private channel
@@ -102,6 +51,7 @@ SUBSCRIBE_MESSAGE = (
     "📝 Setelah join, silakan coba command kembali."
 )
 
+# Initialize bot with parse_mode
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -111,7 +61,7 @@ user_locks = {}
 # Username store
 username_store = UsernameStore()
 
-# Flask app untuk keep-alive
+# Flask app untuk keep-alive dengan port dinamis
 app = Flask(__name__)
 
 @app.route('/')
@@ -120,8 +70,15 @@ def home():
     return "Bot is alive!"
 
 def run_flask():
-    """Run Flask in a separate thread"""
-    app.run(host='0.0.0.0', port=5000)
+    """Run Flask in a separate thread with dynamic port"""
+    port = int(os.getenv('PORT', 5000))
+    while True:
+        try:
+            app.run(host='0.0.0.0', port=port)
+            break
+        except OSError:
+            logger.warning(f"Port {port} is in use, trying port {port + 1}")
+            port += 1
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -427,6 +384,55 @@ async def handle_allusn(message: Message):
         if user_id in user_locks:
             del user_locks[user_id]
 
+async def periodic_log_cleanup():
+    """Periodically clean up old log files"""
+    while True:
+        try:
+            # Find all log files
+            log_files = glob.glob('bot.log*')
+            if not log_files:
+                await asyncio.sleep(3600)  # Sleep for 1 hour if no logs
+                continue
+
+            # Sort by modification time, newest first
+            log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+            # Keep only the most recent log file
+            for old_log in log_files[1:]:
+                try:
+                    os.remove(old_log)
+                    logger.info(f"Removed old log file: {old_log}")
+                except Exception as e:
+                    logger.error(f"Error removing log file {old_log}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error during periodic log cleanup: {e}")
+
+        await asyncio.sleep(3600)  # Run every hour
+
+# Log cleanup function
+def cleanup_old_logs():
+    """Remove old log files except the most recent one"""
+    try:
+        # Find all log files
+        log_files = glob.glob('bot.log*')
+        if not log_files:
+            return
+
+        # Sort by modification time, newest first
+        log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+        # Keep only the most recent log file
+        for old_log in log_files[1:]:
+            try:
+                os.remove(old_log)
+                logger.info(f"Removed old log file: {old_log}")
+            except Exception as e:
+                logger.error(f"Error removing log file {old_log}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error during log cleanup: {e}")
+
 async def main():
     # Clean up old logs on startup
     cleanup_old_logs()
@@ -437,12 +443,40 @@ async def main():
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
 
-    # Start Flask in a separate thread
-    Thread(target=run_flask, daemon=True).start()
-    logger.info("✅ Flask server is running...")
+    try:
+        # Start Flask in a separate thread
+        Thread(target=run_flask, daemon=True).start()
+        logger.info("✅ Flask server is running...")
 
-    logger.info("✅ Bot is running...")
-    await dp.start_polling(bot)
+        # Initialize bot and start polling with custom settings
+        dp.startup.register(on_startup)
+        dp.shutdown.register(on_shutdown)
+
+        logger.info("✅ Bot is running...")
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+
+    except Exception as e:
+        logger.error(f"Error starting bot: {e}")
+        sys.exit(1)
+
+async def on_startup(dispatcher):
+    """Startup handler to ensure clean bot startup"""
+    try:
+        # Delete webhook to ensure clean polling
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted successfully")
+    except Exception as e:
+        logger.error(f"Error in startup: {e}")
+        raise
+
+async def on_shutdown(dispatcher):
+    """Shutdown handler to ensure clean bot shutdown"""
+    try:
+        # Close bot session
+        await bot.session.close()
+        logger.info("Bot session closed successfully")
+    except Exception as e:
+        logger.error(f"Error in shutdown: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
