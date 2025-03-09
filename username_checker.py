@@ -47,17 +47,6 @@ class TelegramUsernameChecker:
                     self._banned_cache.add(username)
                     return True
 
-                # Check headers for ban indicators
-                headers = response.headers
-                if any([
-                    headers.get('X-Robot-Tag') == 'banned',
-                    headers.get('X-Account-Status') == 'suspended',
-                    headers.get('Location', '').endswith('/404'),
-                    headers.get('X-Frame-Options') == 'DENY'
-                ]):
-                    self._banned_cache.add(username)
-                    return True
-
                 # Check content for ban indicators
                 content = await response.text()
                 banned_patterns = [
@@ -81,7 +70,7 @@ class TelegramUsernameChecker:
 
         except Exception as e:
             logger.error(f"Error checking banned status for {username}: {e}")
-            return True  # Assume banned if error occurs
+            return False  # Don't assume banned on error
 
     async def check_fragment_api(self, username: str, retries=3) -> Optional[bool]:
         """Check username availability with Fragment API"""
@@ -89,61 +78,79 @@ class TelegramUsernameChecker:
             logger.info(f'@{username} is banned.')
             return None
 
-        try:
-            async with self.session.get('https://fragment.com') as response:
-                text = await response.text()
-                tree = html.fromstring(text)
-                scripts = tree.xpath('//script/text()')
-                pattern = re.compile(r'ajInit(\{.*?});', re.DOTALL)
-                script = next((script for script in scripts if pattern.search(script)), None)
+        for attempt in range(retries):
+            try:
+                async with self.session.get('https://fragment.com') as response:
+                    if response.status != 200:
+                        logger.warning(f'Fragment API returned status {response.status}, retrying...')
+                        await asyncio.sleep(self.base_delay * (attempt + 1))
+                        continue
 
-                if not script:
-                    logger.error(f'@{username} API URL not found')
-                    return None
+                    text = await response.text()
+                    tree = html.fromstring(text)
+                    scripts = tree.xpath('//script/text()')
+                    pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
 
-                api_url = f'https://fragment.com{json.loads(pattern.search(script).group(1)).get("apiUrl")}'
-                search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
+                    api_url = None
+                    for script in scripts:
+                        match = pattern.search(script)
+                        if match:
+                            try:
+                                data = json.loads(match.group(1))
+                                api_url = f'https://fragment.com{data.get("apiUrl")}'
+                                break
+                            except json.JSONDecodeError:
+                                continue
 
-                async with self.session.post(api_url, data=search_auctions) as response:
-                    if response.status == 429:  # Rate limit hit
-                        if retries > 0:
-                            await asyncio.sleep(self.base_delay * (4 - retries))
-                            return await self.check_fragment_api(username, retries - 1)
-                        return None
+                    if not api_url:
+                        logger.error(f'@{username} API URL not found, retrying...')
+                        await asyncio.sleep(self.base_delay * (attempt + 1))
+                        continue
 
-                    response_data = await response.json()
-                    if not isinstance(response_data, dict) or not response_data.get('html'):
-                        return await self.check_fragment_api(username, retries - 1)
+                    search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
+                    async with self.session.post(api_url, data=search_auctions) as response:
+                        if response.status == 429:  # Rate limit
+                            await asyncio.sleep(self.base_delay * (attempt + 1))
+                            continue
 
-                    tree = html.fromstring(response_data.get('html'))
-                    username_data = tree.xpath('//div[contains(@class, "tm-value")]')[:3]
+                        response_data = await response.json()
+                        if not isinstance(response_data, dict) or not response_data.get('html'):
+                            logger.warning(f'Invalid response data for @{username}, retrying...')
+                            continue
 
-                    if len(username_data) < 3:
-                        return None
+                        tree = html.fromstring(response_data.get('html'))
+                        username_data = tree.xpath('//div[contains(@class, "tm-value")]')[:3]
 
-                    username_tag = username_data[0].text_content()
-                    status = username_data[2].text_content()
-                    price = username_data[1].text_content()
+                        if len(username_data) < 3:
+                            logger.warning(f'Incomplete data for @{username}')
+                            return None
 
-                    if username_tag[1:] != username:
-                        return None
+                        username_tag = username_data[0].text_content()
+                        status = username_data[2].text_content()
+                        price = username_data[1].text_content()
 
-                    if price.isdigit():
-                        logger.info(f'@{username} is for sale: {price}💎')
-                        return None
+                        if username_tag[1:] != username:
+                            logger.warning(f'Username mismatch: {username_tag[1:]} != {username}')
+                            return None
 
-                    if status == 'Unavailable':
-                        logger.critical(f'✅ @{username} is Available ✅')
-                        return True
+                        if price.isdigit():
+                            logger.info(f'@{username} is for sale: {price}💎')
+                            return False
 
-                    return None
+                        if status == 'Unavailable':
+                            logger.info(f'✅ @{username} is Available ✅')
+                            return True
 
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout checking @{username}")
-            return await self.check_fragment_api(username, retries - 1) if retries > 0 else None
-        except Exception as e:
-            logger.error(f"Error checking @{username}: {e}")
-            return None
+                        return False
+
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout checking @{username}")
+                await asyncio.sleep(self.base_delay * (attempt + 1))
+            except Exception as e:
+                logger.error(f"Error checking @{username}: {e}")
+                await asyncio.sleep(self.base_delay * (attempt + 1))
+
+        return None  # Return None after all retries failed
 
     async def get_telegram_web_user(self, username: str) -> bool:
         """Check username via Telegram web"""
@@ -163,11 +170,9 @@ class TelegramUsernameChecker:
         if not self.session.closed:
             await self.session.close()
 
-
 async def main():
     checker = TelegramUsernameChecker()
-
-    username = "testusername"  # Ganti dengan username yang ingin diuji
+    username = "testusername"
     is_available = await checker.check_fragment_api(username)
 
     if is_available:
@@ -176,7 +181,6 @@ async def main():
         logger.info(f"❌ Username @{username} is not available or banned.")
 
     await checker.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
