@@ -34,7 +34,7 @@ from threading import Thread
 # Replace the TOKEN section with environment variable approach
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    TOKEN = "7894481490:AAEPaAkWj9hnGU5xVHbtU4SzmBB2NWNUZPU"
+    TOKEN = "7894481490:AAFMTOf2oQdt6ujJ-cXs2k_g-WKglByDnTw"
 
 
 # Channel information
