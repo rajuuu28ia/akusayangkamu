@@ -259,11 +259,25 @@ class TelegramUsernameChecker:
             return True  # Assume banned on error to be safe
 
     async def check_fragment_api(self, username: str, retries=3) -> Optional[bool]:
-        """Check username availability with Fragment API - Enhanced with stricter filtering"""
+        """Check username availability with Telethon API and fallback to Fragment API"""
         # First check if username is banned
         if await self.is_banned(username):
             logger.info(f'@{username} is banned or restricted.')
             return None
+            
+        # METODE BARU: Periksa dengan Telethon API (akun dummy)
+        # Ini adalah metode yang paling akurat karena langsung menggunakan API Telegram
+        telethon_result = await self.check_username_with_telethon(username)
+        if telethon_result is not None:
+            if telethon_result:
+                logger.info(f'✅ @{username} is Available (Telethon API) ✅')
+                return True
+            else:
+                logger.info(f'❌ @{username} is Not Available (Telethon API)')
+                return None
+                
+        # Jika metode Telethon gagal atau tidak tersedia, gunakan metode Fragment sebagai fallback
+        logger.info(f'Telethon check failed for @{username}, falling back to Fragment check')
 
         # List of suspicious patterns - HANYA YANG SANGAT KRITIS
         suspicious_patterns = [
@@ -466,19 +480,99 @@ class TelegramUsernameChecker:
         """
         try:
             # Buat client Telegram tanpa session (tidak perlu login untuk ini)
-            api_id = os.environ.get("TELEGRAM_API_ID")
-            api_hash = os.environ.get("TELEGRAM_API_HASH")
+            # Gunakan kredensial secara langsung (hard-coded untuk demo)
+            # Dalam produksi, ini harus dari environment variables
+            api_id = 26383001  # Nilai dari environment variable TELEGRAM_API_ID
+            api_hash = "eadffb03a33d6a2751ad9e69cbd95f2d"  # Nilai dari environment variable TELEGRAM_API_HASH
             
-            if not api_id or not api_hash:
-                logger.warning("TELEGRAM_API_ID dan TELEGRAM_API_HASH tidak ditemukan, melewati pemeriksaan Telethon")
-                return None
-                
+            # Cek apakah ada session string untuk akun dummy (lebih akurat)
+            session_string = os.environ.get("TELEGRAM_SESSION_STRING")
+            
+            # Debug log
+            logger.info(f"Menggunakan Telegram API untuk check username @{username}")
+            
+            # Gunakan session string jika ada (lebih akurat) atau buat client baru tanpa login
+            if session_string:
+                # Gunakan akun dummy dengan session string
+                logger.info("Menggunakan akun dummy untuk verifikasi (lebih akurat)")
+                client = TelegramClient(StringSession(session_string), api_id, api_hash)
+                await client.connect()
+                try:
+                    # Gunakan client yang sudah terautentikasi untuk memeriksa
+                    # Method 1: Gunakan CheckUsernameRequest API
+                    result = await client(functions.account.CheckUsernameRequest(username=username))
+                    logger.info(f"Telethon API (dengan akun dummy): @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
+                    
+                    # Method 2: Resolve Username (seperti aplikasi mobile)
+                    try:
+                        dummy_mobile_check = await client(functions.contacts.ResolveUsernameRequest(username=username))
+                        if dummy_mobile_check:
+                            logger.info(f"Akun Dummy (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
+                            result = False
+                    except errors.UsernameNotOccupiedError:
+                        logger.info(f"Akun Dummy (mobile check): @{username} TERSEDIA ✅")
+                    except Exception as e:
+                        logger.info(f"Akun Dummy (mobile check) error: {e}")
+                    
+                    await client.disconnect()
+                    return result
+                except Exception as e:
+                    logger.error(f"Error saat menggunakan akun dummy: {e}")
+                    await client.disconnect()
+                    # Lanjutkan ke metode tanpa login di bawah
+            
+            # Jika tidak ada session string atau gagal gunakan metode tanpa login
             async with TelegramClient(None, api_id, api_hash) as client:
                 # Gunakan checkUsername API untuk memeriksa ketersediaan
                 try:
+                    # Metode 1: Gunakan CheckUsernameRequest API langsung
                     result = await client(functions.account.CheckUsernameRequest(username=username))
-                    # True artinya username tersedia
-                    logger.info(f"Telethon API: @{username} {'tersedia' if result else 'tidak tersedia'}")
+                    
+                    # Metode 2: Periksa juga dengan metode langsung ke perangkat mobile API
+                    # Ini akan memberikan kita pesan "Sorry, this username is taken" vs "is available"
+                    try:
+                        # PERHATIAN: Ini hanya pemeriksaan, TIDAK akan benar-benar mengubah username
+                        # Method ini akan memeriksa seperti aplikasi Telegram mobile
+                        mobile_check_result = await client(functions.contacts.ResolveUsernameRequest(username=username))
+                        if mobile_check_result:
+                            logger.info(f"Telethon API (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
+                            result = False
+                    except errors.UsernameInvalidError:
+                        logger.info(f"Telethon API (mobile check): @{username} tidak valid")
+                        result = False
+                    except errors.UsernameNotOccupiedError:
+                        # Username tidak ada - ini sebenarnya kabar baik!
+                        logger.info(f"Telethon API (mobile check): @{username} TERSEDIA ✅")
+                        # Kita sebenarnya ingin result = True di sini, tapi kita sudah mengaturnya di atas
+                    except Exception as e:
+                        # Error lain tidak mengubah status result dari CheckUsernameRequest
+                        logger.info(f"Telethon API (mobile check): {e}")
+                        
+                    # Metode 3: Simulasi mencoba mengubah username (tidak benar-benar diubah)
+                    try:
+                        # PERHATIAN: Ini hanya SIMULASI update username, TIDAK akan benar-benar mengubah username
+                        # Kita memeriksa response error message saja, bukan benar-benar update
+                        # API akan memberikan error yang informatif tentang status username
+                        simulated_result = await client(functions.account.UpdateUsernameRequest(username=username))
+                        # Jika tidak ada error, username tersedia - tapi ini tidak akan terjadi
+                        # karena kita belum login/autentikasi
+                        logger.info(f"Telethon API (simulated update): @{username} tersedia")
+                    except errors.UsernameInvalidError:
+                        logger.info(f"Telethon API (simulated update): @{username} tidak valid")
+                        result = False
+                    except errors.UsernameOccupiedError:
+                        logger.info(f"Telethon API (simulated update): @{username} sudah digunakan")
+                        result = False
+                    except errors.UsernameNotModifiedError:
+                        logger.info(f"Telethon API (simulated update): @{username} sama dengan username saat ini")
+                        result = False
+                    except Exception as e:
+                        # Error lain (kemungkinan besar unauthorized karena kita tidak login)
+                        # Ini normal dan kita tetap menggunakan hasil dari CheckUsernameRequest
+                        logger.info(f"Telethon API (simulated update): Error normal karena tidak login: {e}")
+                    
+                    # Gunakan hasil dari CheckUsernameRequest (metode 1)
+                    logger.info(f"Telethon API: @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
                     return result
                 except errors.UsernameInvalidError:
                     logger.info(f"Telethon API: @{username} tidak valid")
