@@ -211,7 +211,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 
                         # Small delay between batches to avoid rate limits
                         if i + batch_size < len(usernames):
-                            delay = 0.5  # Reduced delay between batches
+                            delay = 2.0  # Increased delay between batches
                             logger.info(f"Waiting {delay}s before next batch...")
                             await asyncio.sleep(delay)
 
