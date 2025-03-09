@@ -109,21 +109,22 @@ class TelegramUsernameChecker:
                 self._banned_cache.add(username)
                 return True
                 
-            # Check for transposition/character similarity (e.g. 'admin' -> 'amdin')
-            if len(reserved) >= 4 and len(username) >= 4:
-                word_chars = set(reserved)
-                username_chars = set(username_lower)
-                if len(word_chars.intersection(username_chars)) >= min(len(reserved), len(username)) * 0.75:
-                    logger.info(f"@{username} has character similarity with reserved word: {reserved}")
-                    self._banned_cache.add(username)
-                    return True
-            
-            # Levenshtein distance check for close matches
-            if len(reserved) >= 4 and len(username) >= 4:
-                if self._levenshtein_distance(reserved, username_lower) <= 2:  # Very close match
-                    logger.info(f"@{username} has edit distance <= 2 from reserved word: {reserved}")
-                    self._banned_cache.add(username)
-                    return True
+            # Hanya berlaku untuk reserved words yang sangat sensitif
+            sensitive_reserved = ['admin', 'telegram', 'support', 'help', 'official', 'mod', 'staff']
+            if reserved in sensitive_reserved:
+                # Check for transposition only for sensitive words (e.g. 'admin' -> 'amdin')
+                if len(reserved) >= 4 and len(username) >= 4:
+                    # Hitung exact substring
+                    if reserved in username_lower:
+                        logger.info(f"@{username} contains sensitive word: {reserved}")
+                        self._banned_cache.add(username)
+                        return True
+                    
+                    # Levenshtein distance check - hanya untuk kata sensitif
+                    if self._levenshtein_distance(reserved, username_lower) <= 1:  # Sangat mirip
+                        logger.info(f"@{username} has edit distance <= 1 from sensitive word: {reserved}")
+                        self._banned_cache.add(username)
+                        return True
         
         # --- LEVEL 3: PATTERN MATCHING (EXTREME) ---
             
@@ -133,74 +134,38 @@ class TelegramUsernameChecker:
             r'^[a-z]{1,5}$',
             # Numeric-only usernames (reserved)
             r'^[0-9]+$',
-            # Alphanumeric patterns that indicate premium/reserved
-            r'^[a-z][0-9]$', r'^[0-9][a-z]$', r'^[a-z]{1,2}[0-9]{1,2}$', r'^[0-9]{1,2}[a-z]{1,2}$',
+            # Common prefixes for Telegram officials (reserved) - CRITICAL ONLY
+            r'^(telegram|admin|support|help|bot|official|mod).*',
             
-            # Common prefixes for Telegram officials (reserved) - EXTENDED
-            r'^(telegram|tg|admin|support|help|info|news|bot|official|service|verify|staff|team|mod|contact|care|assist|auth|security|privacy).*',
+            # Common suffixes for official accounts - CRITICAL ONLY
+            r'.*(official|support|admin|mod|team|staff)$',
             
-            # Common suffixes for official accounts - EXTENDED
-            r'.*(official|support|help|admin|mod|team|staff|service|verify|account|contact|care|assist|auth|security|privacy)$',
+            # Common patterns in phishing/scam attempts - CRITICAL ONLY
+            r'.*(_adm|_support|_admin|admin[0-9]|[0-9]admin|_team|_official).*',
             
-            # Common patterns in phishing/scam attempts - EXTENDED
-            r'.*(_adm|_support|_admin|admin[0-9]|[0-9]admin|_team|_official|_help|_service|_verify|_staff|_mod).*',
-            
-            # Usernames with repeating characters (often banned)
-            r'.*(.)\1{2,}.*',  # 3+ of same character 
+            # Usernames with excessive repeating characters (often banned)
+            r'.*(.)\1{3,}.*',  # 4+ of same character (menos estrito)
             
             # Username with special characters (invalid or suspicious)
-            r'^[_.].*|.*[_.]$|.*[_]{2,}.*|.*[.]{2,}.*',
+            r'^[_.].*|.*[_.]$', # Apenas inicio e fim com caracteres especiais
             
-            # Sequential character patterns (often reserved)
-            r'^abcd.*|^efgh.*|^ijkl.*|^mnop.*|^qrst.*|^uvwx.*|^wxyz.*|^1234.*|^2345.*|^3456.*|^4567.*|^5678.*|^6789.*|^7890.*',
+            # Character-digit substitution patterns for sensitive words only
+            r'.*(adm[1il]n|supp[0o]rt|[0o]ff[1il]c[1il]al|m[0o]derat[0o]r).*',
             
-            # Mixed alphanumeric patterns (common in banned)
-            r'.*[0-9][a-z][0-9].*', r'.*[a-z][0-9][a-z].*',
+            # Official-sounding names - KRITICAL ONLY
+            r'^.*admin.*$', r'^.*support.*$', r'^.*official.*$', r'^.*telegram.*$', 
+            r'^.*moderator.*$', r'^.*staff.*$',
             
-            # Special character combinations (suspicious)
-            r'.*[_.-][_.-].*',  # Double special characters
-            r'^\d.*\d$',        # Starts and ends with digit
+            # Brand names - KRITICAL ONLY 
+            r'^.*(apple|google|meta|facebook|instagram|whatsapp).*$',
             
-            # Character-digit substitution patterns (common in banned)
-            r'.*[0o][0o].*', r'.*[1il][1il].*', r'.*[0o][1il].*', r'.*[1il][0o].*',
-            r'.*[5s][5s].*', r'.*[3e][3e].*', r'.*[4a][4a].*', r'.*[8b][8b].*',
+            # Explicit content- KRITICAL ONLY
+            r'^.*(porn|xxx|sex).*$',
             
-            # Official-sounding names (commonly banned)
-            r'.*support.*', r'.*admin.*', r'.*help.*', r'.*service.*',
-            r'.*official.*', r'.*team.*', r'.*staff.*', r'.*mod.*',
-            r'.*contact.*', r'.*care.*', r'.*telegram.*', r'.*assist.*',
-            r'.*verify.*', r'.*auth.*', r'.*security.*', r'.*privacy.*',
-            
-            # Brand names (commonly protected)
-            r'.*apple.*', r'.*google.*', r'.*meta.*', r'.*facebook.*',
-            r'.*instagram.*', r'.*whatsapp.*', r'.*microsoft.*', r'.*amazon.*',
-            r'.*netflix.*', r'.*spotify.*', r'.*paypal.*', r'.*visa.*',
-            r'.*youtube.*', r'.*twitter.*', r'.*tiktok.*',
-            
-            # Support/service-related
-            r'.*helpdesk.*', r'.*customer.*', r'.*service.*', r'.*agent.*',
-            r'.*representative.*', r'.*operator.*',
-            
-            # Premium/financial patterns
-            r'.*premium.*', r'.*wallet.*', r'.*crypto.*', r'.*bitcoin.*',
-            r'.*payment.*', r'.*finance.*', r'.*bank.*', r'.*money.*',
-            
-            # Explicit content or harmful related
-            r'.*porn.*', r'.*adult.*', r'.*xxx.*', r'.*sex.*',
-            r'.*hack.*', r'.*crack.*', r'.*cheat.*', r'.*spam.*',
-            
-            # Generic names used by scammers
-            r'.*real.*', r'.*true.*', r'.*genuine.*', r'.*legit.*',
-            r'.*verified.*', r'.*original.*',
-            
-            # Common pattern replacements with regex to catch obfuscation
-            r'.*[aA][^a-zA-Z]*[dD][^a-zA-Z]*[mM][^a-zA-Z]*[iI][^a-zA-Z]*[nN].*',  # a-d-m-i-n with possible characters between
-            r'.*[sS][^a-zA-Z]*[uU][^a-zA-Z]*[pP][^a-zA-Z]*[pP][^a-zA-Z]*[oO][^a-zA-Z]*[rR][^a-zA-Z]*[tT].*',  # s-u-p-p-o-r-t
-            r'.*[oO][^a-zA-Z]*[fF][^a-zA-Z]*[fF][^a-zA-Z]*[iI][^a-zA-Z]*[cC][^a-zA-Z]*[iI][^a-zA-Z]*[aA][^a-zA-Z]*[lL].*',  # o-f-f-i-c-i-a-l
-            
-            # Mixed case patterns (suspicious in usernames)
-            r'.*[a-z][A-Z].*',  # lowercase followed by uppercase
-            r'.*[A-Z]{2,}.*'    # 2+ uppercase letters
+            # Common pattern replacements for sensitive terms only
+            r'.*[aA][dD][mM][iI][nN].*',  # admin with exact case variations
+            r'.*[sS][uU][pP][pP][oO][rR][tT].*',  # support with exact case variations
+            r'.*[oO][fF][fF][iI][cC][iI][aA][lL].*'  # official with exact case variations
         ]
         
         for pattern in banned_patterns:
@@ -209,9 +174,9 @@ class TelegramUsernameChecker:
                 self._banned_cache.add(username)
                 return True
         
-        # --- LEVEL 4: STATISTICAL CHECKS ---
+        # --- LEVEL 4: STATISTICAL CHECKS (KURANGI KEKETATAN) ---
                 
-        # Check for repetitive characters (paranoid level)
+        # Check for repetitive characters (level normal)
         char_counts = {}
         for char in username_lower:
             if char in char_counts:
@@ -220,26 +185,29 @@ class TelegramUsernameChecker:
                 char_counts[char] = 1
                 
         for char, count in char_counts.items():
-            if count >= 2 and char in '0123456789':  # Two or more of any digit
-                logger.info(f"@{username} has {count} instances of digit '{char}'")
-                self._banned_cache.add(username)
-                return True
-            if count >= 3:  # Three or more of the same character
-                logger.info(f"@{username} has {count} instances of '{char}'")
+            # Hanya periksa digit berulang untuk username yang dicurigai
+            if count >= 3 and char in '0123456789' and len(username) <= 6:  # Three+ digit hanya untuk username pendek
+                logger.info(f"@{username} has {count} instances of digit '{char}' in short username")
                 self._banned_cache.add(username)
                 return True
                 
-        # Character distribution check (suspicious if very uneven)
+            # Karakter berulang yang sangat berlebihan (4+ kali)
+            if count >= 4:  # Empat atau lebih karakter yang sama (kurangi keketatan)
+                logger.info(f"@{username} has excessive {count} instances of '{char}'")
+                self._banned_cache.add(username)
+                return True
+                
+        # Character distribution check - only for extreme cases
         unique_chars = len(char_counts)
-        if unique_chars <= 3 and len(username) > 5:
-            logger.info(f"@{username} has suspicious character distribution - only {unique_chars} unique chars")
+        if unique_chars <= 2 and len(username) > 6:  # Hanya 2 karakter unik pada username panjang
+            logger.info(f"@{username} has extremely limited character distribution - only {unique_chars} unique chars")
             self._banned_cache.add(username)
             return True
             
-        # Entropy check - low entropy usernames are suspicious
+        # Entropy check - hanya untuk kasus ekstrem
         entropy = self._calculate_entropy(username_lower)
-        if entropy < 2.5 and len(username) > 5:
-            logger.info(f"@{username} has suspicious low entropy ({entropy})")
+        if entropy < 2.0 and len(username) > 6:  # Entropi sangat rendah pada username panjang
+            logger.info(f"@{username} has extremely low entropy ({entropy})")
             self._banned_cache.add(username)
             return True
 
@@ -324,35 +292,19 @@ class TelegramUsernameChecker:
             logger.info(f'@{username} is banned or restricted.')
             return None
 
-        # More comprehensive list of suspicious patterns that are likely banned
+        # List of suspicious patterns - HANYA YANG SANGAT KRITIS
         suspicious_patterns = [
-            # Official-sounding names (commonly banned)
-            r'.*support.*', r'.*admin.*', r'.*help.*', r'.*service.*',
-            r'.*official.*', r'.*team.*', r'.*staff.*', r'.*mod.*',
-            r'.*contact.*', r'.*care.*', r'.*telegram.*', r'.*assist.*',
-            r'.*verify.*', r'.*auth.*', r'.*security.*', r'.*privacy.*',
+            # Official-sounding names (hanya yang sangat sensitif)
+            r'^.*admin.*$', r'^.*support.*$', r'^.*telegram.*$', r'^.*official.*$',
             
-            # Brand names (commonly protected)
-            r'.*apple.*', r'.*google.*', r'.*meta.*', r'.*facebook.*',
-            r'.*instagram.*', r'.*whatsapp.*', r'.*microsoft.*', r'.*amazon.*',
-            r'.*netflix.*', r'.*spotify.*', r'.*paypal.*', r'.*visa.*',
-            r'.*youtube.*', r'.*twitter.*', r'.*tiktok.*',
+            # Brand names (hanya yang paling umum diproteksi)
+            r'^.*apple.*$', r'^.*google.*$', r'^.*meta.*$', r'^.*facebook.*$',
             
-            # Support/service-related 
-            r'.*helpdesk.*', r'.*customer.*', r'.*service.*', r'.*agent.*',
-            r'.*representative.*', r'.*operator.*',
+            # Explicit content
+            r'^.*porn.*$', r'^.*xxx.*$', r'^.*sex.*$',
             
-            # Premium/financial patterns
-            r'.*premium.*', r'.*wallet.*', r'.*crypto.*', r'.*bitcoin.*',
-            r'.*payment.*', r'.*finance.*', r'.*bank.*', r'.*money.*',
-            
-            # Explicit content or harmful related
-            r'.*porn.*', r'.*adult.*', r'.*xxx.*', r'.*sex.*',
-            r'.*hack.*', r'.*crack.*', r'.*cheat.*', r'.*spam.*',
-            
-            # Generic names used by scammers
-            r'.*real.*', r'.*true.*', r'.*genuine.*', r'.*legit.*',
-            r'.*verified.*', r'.*original.*'
+            # Hanya untuk akun scam yang sangat jelas
+            r'^.*spam.*$', r'^.*scam.*$', r'^.*fake.*$'
         ]
         
         if any(re.search(pattern, username.lower()) for pattern in suspicious_patterns):
@@ -538,94 +490,47 @@ class TelegramUsernameChecker:
 
                                         # Ultimate PARANOIA checks - the most extreme filtering possible
                                         
-                                        # Triple-check banned status one more time
-                                        if await self.is_banned(username):
-                                            logger.info(f'@{username} failed the triple banned check')
-                                            return None
-                                            
-                                        # Direct Fragment API validation
+                                        # Final verification yang lebih terfokus - hanya periksa hal paling penting
+                                        
+                                        # Fragment API validation untuk username premium
                                         try:
-                                            # Try one more check via different channel
                                             async with self.session.get(f'https://fragment.com/username/{username}') as frag_resp:
                                                 frag_content = await frag_resp.text()
                                                 
-                                                # Expanded check for any concerning indicators
-                                                concern_indicators = [
-                                                    # Not found indicators
-                                                    "not found", "not available", "auction", "tgFragment.showSimilar",
-                                                    # Sale indicators
-                                                    "for sale", "buy now", "place bid", "auction", "current price",
-                                                    # General concern indicators
-                                                    "reserved", "premium", "exclusive", "special", "unique", "rare",
-                                                    "owned by", "belongs to", "registered", "claimed", "taken",
-                                                    # Technical indicators
-                                                    "error", "404", "not exist", "unavailable", "buy",
-                                                    # New indicators based on latest investigation
-                                                    "username is", "available on", "fragment auction"
+                                                # Hanya indikator kritis - jual beli username
+                                                sale_indicators = [
+                                                    "for sale", "buy now", "place bid", "auction", "current price"
                                                 ]
                                                 
-                                                if any(indicator in frag_content.lower() for indicator in concern_indicators):
-                                                    logger.info(f'@{username} raised concerns in Fragment direct check')
+                                                if any(indicator in frag_content.lower() for indicator in sale_indicators):
+                                                    logger.info(f'@{username} appears to be for sale in final check')
                                                     return None
                                                     
                                         except Exception as e:
-                                            logger.error(f"Error in absolute final check for @{username}: {str(e)}")
-                                            # In PARANOIA mode - any error means the username is banned
-                                            logger.info(f'@{username} failed Fragment check due to error - assuming banned')
-                                            return None
+                                            logger.error(f"Error in final Fragment check for @{username}: {str(e)}")
+                                            # Tidak gagal pada error, hanya log
                                         
-                                        # Additional ultra-paranoid checks
-                                        
-                                        # 1. Special pattern length checks (statistically high-risk)
-                                        if len(username) == 6 or len(username) == 7:
-                                            # 6-7 character usernames are frequently premium but not caught by other checks
-                                            letter_count = sum(1 for c in username if c.isalpha())
-                                            digit_count = sum(1 for c in username if c.isdigit())
-                                            
-                                            # Suspicious patterns in this length range
-                                            if (letter_count == 4 and digit_count == 2) or \
-                                               (letter_count == 5 and digit_count == 1) or \
-                                               (letter_count == 3 and digit_count == 3):
-                                                logger.info(f'@{username} has suspicious character ratio in 6-7 char range')
-                                                return None
-                                        
-                                        # 2. Verify with additional HTTP request patterns and user agents
+                                        # Verifikasi dasar dengan user agent berbeda
                                         try:
-                                            # Different user agent to catch anti-bot measures
                                             mobile_headers = {
-                                                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
-                                                'Accept-Language': 'en-US,en;q=0.9',
-                                                'Referer': 'https://telegram.org/'
+                                                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15'
                                             }
                                             
                                             async with self.session.get(f'https://t.me/{username}', 
                                                                         headers=mobile_headers, 
                                                                         allow_redirects=True) as mobile_resp:
                                                 
-                                                # If status code isn't exactly 200, be suspicious
-                                                if mobile_resp.status != 200:
-                                                    logger.info(f'@{username} failed mobile user agent check with status {mobile_resp.status}')
+                                                # Hanya cek error status
+                                                if mobile_resp.status >= 400:
+                                                    logger.info(f'@{username} failed with error status {mobile_resp.status}')
                                                     return None
-                                                    
-                                                # Check final URL - some banned usernames redirect subtly
-                                                final_url = str(mobile_resp.url)
-                                                if username.lower() not in final_url.lower():
-                                                    logger.info(f'@{username} caused a redirect to {final_url}')
-                                                    return None
-                                                    
-                                                mobile_content = await mobile_resp.text()
-                                                # Final content length check - banned pages are often shorter
-                                                if len(mobile_content) < 5000:
-                                                    logger.info(f'@{username} returned suspiciously short page ({len(mobile_content)} bytes)')
-                                                    return None
-                                                    
+                                                
                                         except Exception as e:
-                                            logger.error(f"Error in mobile check for @{username}: {str(e)}")
-                                            return None  # Paranoia - any error means banned
+                                            logger.error(f"Error in final check for @{username}: {str(e)}")
+                                            # Tidak gagal pada error, hanya log
                                         
-                                        # ABSOLUTELY 100% PASS - username has passed ALL verification layers
-                                        # including the most paranoid checks possible
-                                        logger.info(f'✅ @{username} is 100% PARANOID Verified Available ✅')
+                                        # PASS - Username telah lulus semua verifikasi wajib
+                                        logger.info(f'✅ @{username} is Verified Available ✅')
                                         return True
                                     else:
                                         logger.info(f'@{username} is taken (t.me check)')
