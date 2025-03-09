@@ -36,7 +36,7 @@ from threading import Thread
 # Replace the TOKEN section with environment variable approach
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    TOKEN = "7894481490:AAFMTOf2oQdt6ujJ-cXs2k_g-WKglByDnTw"
+    TOKEN = "7737863270:AAEOgdx156qQ20WZD3gBp7-Pzn4zBCW8iaM"
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
@@ -86,8 +86,7 @@ async def cmd_start(message: Message):
     welcome_msg = (
         "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
         "📋 <b>Cara Penggunaan:</b>\n"
-        f"1️⃣ Join channel kami:\n   🔗 {CHANNEL_LINK}\n\n"
-        "2️⃣ Gunakan command:\n"
+        "• Gunakan command:\n"
         "   📝 <code>/allusn [username]</code> - Generate semua variasi username\n\n"
         "📱 <b>Contoh:</b>\n"
         "   <code>/allusn username</code>\n\n"
@@ -195,11 +194,7 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
 async def handle_allusn(message: Message):
     user_id = message.from_user.id
 
-    # Check channel subscription
-    if not await check_subscription(user_id):
-        logger.warning(f"User {user_id} tried to use bot without joining channel")
-        await message.reply(SUBSCRIBE_MESSAGE)
-        return
+    # Channel subscription check removed - everyone can use the bot
 
     # Check if user is locked
     if user_id in user_locks:

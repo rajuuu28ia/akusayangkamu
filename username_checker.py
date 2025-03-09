@@ -114,18 +114,44 @@ class TelegramUsernameChecker:
             return True  # Assume banned on error to be safe
 
     async def check_fragment_api(self, username: str, retries=3) -> Optional[bool]:
-        """Check username availability with Fragment API"""
+        """Check username availability with Fragment API - Enhanced with stricter filtering"""
         # First check if username is banned
         if await self.is_banned(username):
             logger.info(f'@{username} is banned or restricted.')
             return None
 
-        # Add to banned cache if username contains suspicious patterns
+        # More comprehensive list of suspicious patterns that are likely banned
         suspicious_patterns = [
+            # Official-sounding names (commonly banned)
             r'.*support.*', r'.*admin.*', r'.*help.*', r'.*service.*',
-            r'.*official.*', r'.*team.*', r'.*staff.*', r'.*mod.*'
+            r'.*official.*', r'.*team.*', r'.*staff.*', r'.*mod.*',
+            r'.*contact.*', r'.*care.*', r'.*telegram.*', r'.*assist.*',
+            r'.*verify.*', r'.*auth.*', r'.*security.*', r'.*privacy.*',
+            
+            # Brand names (commonly protected)
+            r'.*apple.*', r'.*google.*', r'.*meta.*', r'.*facebook.*',
+            r'.*instagram.*', r'.*whatsapp.*', r'.*microsoft.*', r'.*amazon.*',
+            r'.*netflix.*', r'.*spotify.*', r'.*paypal.*', r'.*visa.*',
+            r'.*youtube.*', r'.*twitter.*', r'.*tiktok.*',
+            
+            # Support/service-related 
+            r'.*helpdesk.*', r'.*customer.*', r'.*service.*', r'.*agent.*',
+            r'.*representative.*', r'.*operator.*',
+            
+            # Premium/financial patterns
+            r'.*premium.*', r'.*wallet.*', r'.*crypto.*', r'.*bitcoin.*',
+            r'.*payment.*', r'.*finance.*', r'.*bank.*', r'.*money.*',
+            
+            # Explicit content or harmful related
+            r'.*porn.*', r'.*adult.*', r'.*xxx.*', r'.*sex.*',
+            r'.*hack.*', r'.*crack.*', r'.*cheat.*', r'.*spam.*',
+            
+            # Generic names used by scammers
+            r'.*real.*', r'.*true.*', r'.*genuine.*', r'.*legit.*',
+            r'.*verified.*', r'.*original.*'
         ]
-        if any(re.match(pattern, username.lower()) for pattern in suspicious_patterns):
+        
+        if any(re.search(pattern, username.lower()) for pattern in suspicious_patterns):
             self._banned_cache.add(username)
             logger.info(f'@{username} contains suspicious pattern')
             return None
