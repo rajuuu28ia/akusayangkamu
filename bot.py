@@ -1,7 +1,61 @@
 import logging.handlers
 import sys
+import os
+import glob
+import asyncio
+from datetime import datetime, timedelta
 
-# Update logging configuration at the start of the file
+# Log cleanup function
+async def periodic_log_cleanup():
+    """Periodically clean up old log files"""
+    while True:
+        try:
+            # Find all log files
+            log_files = glob.glob('bot.log*')
+            if not log_files:
+                await asyncio.sleep(3600)  # Sleep for 1 hour if no logs
+                continue
+
+            # Sort by modification time, newest first
+            log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+            # Keep only the most recent log file
+            for old_log in log_files[1:]:
+                try:
+                    os.remove(old_log)
+                    logger.info(f"Removed old log file: {old_log}")
+                except Exception as e:
+                    logger.error(f"Error removing log file {old_log}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error during periodic log cleanup: {e}")
+
+        await asyncio.sleep(3600)  # Run every hour
+
+# Log cleanup function
+def cleanup_old_logs():
+    """Remove old log files except the most recent one"""
+    try:
+        # Find all log files
+        log_files = glob.glob('bot.log*')
+        if not log_files:
+            return
+
+        # Sort by modification time, newest first
+        log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+        # Keep only the most recent log file
+        for old_log in log_files[1:]:
+            try:
+                os.remove(old_log)
+                logger.info(f"Removed old log file: {old_log}")
+            except Exception as e:
+                logger.error(f"Error removing log file {old_log}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error during log cleanup: {e}")
+
+# Update logging configuration with smaller file size
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -9,15 +63,13 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
         logging.handlers.RotatingFileHandler(
             'bot.log',
-            maxBytes=10000000,  # 10MB
-            backupCount=5
+            maxBytes=1000000,  # 1MB
+            backupCount=1  # Keep only one backup
         )
     ]
 )
 logger = logging.getLogger(__name__)
 
-import asyncio
-import os
 import re
 import time
 from aiogram import Bot, Dispatcher, types
@@ -376,6 +428,12 @@ async def handle_allusn(message: Message):
             del user_locks[user_id]
 
 async def main():
+    # Clean up old logs on startup
+    cleanup_old_logs()
+
+    # Start periodic log cleanup task
+    asyncio.create_task(periodic_log_cleanup())
+
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
 
