@@ -9,7 +9,7 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
         logging.handlers.RotatingFileHandler(
             'bot.log',
-            maxBytes=10000000,
+            maxBytes=10000000,  # 10MB
             backupCount=5
         )
     ]
