@@ -4,6 +4,7 @@ import os
 import glob
 import asyncio
 from datetime import datetime, timedelta
+from collections import deque
 
 # Log cleanup function
 async def periodic_log_cleanup():
@@ -234,6 +235,35 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
         logger.info(f"All batches completed in {total_time:.2f}s. Found {len(results)} available usernames")
         return results
 
+# User queue system
+active_users = set()  # Currently processing users
+user_queue = deque()  # Waiting users
+MAX_CONCURRENT_USERS = 8
+
+async def process_queued_users():
+    """Process users in queue when slots are available"""
+    while True:
+        try:
+            # Check if we can process more users
+            while len(active_users) < MAX_CONCURRENT_USERS and user_queue:
+                user_id = user_queue.popleft()
+                active_users.add(user_id)
+                # Notify user their turn has started
+                try:
+                    await bot.send_message(
+                        user_id,
+                        "🎉 Giliran Anda untuk generate username!\n"
+                        "Silakan kirim command /allusn [username] sekarang"
+                    )
+                except Exception as e:
+                    logger.error(f"Error notifying user {user_id}: {e}")
+                    active_users.remove(user_id)
+
+        except Exception as e:
+            logger.error(f"Error in queue processor: {e}")
+
+        await asyncio.sleep(5)  # Check queue every 5 seconds
+
 @dp.message(Command("allusn"))
 async def handle_allusn(message: Message):
     user_id = message.from_user.id
@@ -244,34 +274,42 @@ async def handle_allusn(message: Message):
         await message.reply(SUBSCRIBE_MESSAGE)
         return
 
-    # Check if user is locked
-    if user_id in user_locks:
-        await message.reply("⚠️ Tunggu proses sebelumnya selesai dulu!")
-        return
+    # Queue system
+    if user_id not in active_users:
+        queue_position = len(user_queue) + 1
+        estimated_wait = (queue_position // MAX_CONCURRENT_USERS) * 70  # 70 seconds per batch
 
-    # Parse command
-    args = message.text.split()
-    if len(args) < 2:
-        await message.reply("⚠️ Gunakan format: /allusn username")
-        return
+        if len(active_users) >= MAX_CONCURRENT_USERS:
+            user_queue.append(user_id)
+            await message.reply(
+                f"⏳ Bot sedang sibuk! Anda berada di antrian ke-{queue_position}\n"
+                f"Estimasi waktu tunggu: {estimated_wait} detik\n"
+                "Anda akan diberi notifikasi saat giliran tiba"
+            )
+            return
 
-    base_name = args[1].lower()
-
-    # Validate username
-    if len(base_name) < 4:
-        await message.reply("⚠️ Username terlalu pendek! Minimal 4 karakter.")
-        return
-    elif len(base_name) > 32:
-        await message.reply("⚠️ Username terlalu panjang! Maksimal 32 karakter.")
-        return
-    elif not re.match(r'^[a-zA-Z0-9_]+$', base_name):
-        await message.reply("⚠️ Username hanya boleh mengandung huruf, angka, dan underscore.")
-        return
-
-    # Lock user
-    user_locks[user_id] = True
+        active_users.add(user_id)
 
     try:
+        # Parse command
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply("⚠️ Gunakan format: /allusn username")
+            return
+
+        base_name = args[1].lower()
+
+        # Validate username
+        if len(base_name) < 4:
+            await message.reply("⚠️ Username terlalu pendek! Minimal 4 karakter.")
+            return
+        elif len(base_name) > 32:
+            await message.reply("⚠️ Username terlalu panjang! Maksimal 32 karakter.")
+            return
+        elif not re.match(r'^[a-zA-Z0-9_]+$', base_name):
+            await message.reply("⚠️ Username hanya boleh mengandung huruf, angka, dan underscore.")
+            return
+
         # Send processing message
         processing_msg = await message.reply(
             "⚠️ <b>Informasi Penting</b> ⚠️\n\n"
@@ -423,9 +461,10 @@ async def handle_allusn(message: Message):
         await message.reply(f"❌ Terjadi kesalahan: {str(e)}")
 
     finally:
-        # Always unlock user
-        if user_id in user_locks:
-            del user_locks[user_id]
+        # Remove user from active users when done
+        if user_id in active_users:
+            active_users.remove(user_id)
+
 
 async def main():
     # Clean up old logs on startup
@@ -433,6 +472,9 @@ async def main():
 
     # Start periodic log cleanup task
     asyncio.create_task(periodic_log_cleanup())
+
+    # Start queue processor
+    asyncio.create_task(process_queued_users())
 
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
