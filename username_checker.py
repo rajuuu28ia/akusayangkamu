@@ -10,6 +10,7 @@ from lxml import html
 from typing import Optional, Dict, Set, Union
 from config import RESERVED_WORDS
 from telethon import TelegramClient, functions, errors
+from telethon.sessions import StringSession
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -495,30 +496,54 @@ class TelegramUsernameChecker:
             if session_string:
                 # Gunakan akun dummy dengan session string
                 logger.info("Menggunakan akun dummy untuk verifikasi (lebih akurat)")
-                client = TelegramClient(StringSession(session_string), api_id, api_hash)
-                await client.connect()
+                
+                # Buat client dengan session string yang sudah ada (tidak perlu login ulang)
+                # Load string session dengan koneksi otomatis dan tidak perlu interaksi
+                client = TelegramClient(
+                    StringSession(session_string), 
+                    api_id, 
+                    api_hash,
+                    # Parameter tambahan untuk menghindari interaksi login
+                    device_model="Dummy Checker",
+                    system_version="1.0",
+                    app_version="1.0",
+                    lang_code="en",
+                    system_lang_code="en"
+                )
+                
                 try:
-                    # Gunakan client yang sudah terautentikasi untuk memeriksa
-                    # Method 1: Gunakan CheckUsernameRequest API
-                    result = await client(functions.account.CheckUsernameRequest(username=username))
-                    logger.info(f"Telethon API (dengan akun dummy): @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
+                    # Hubungkan dan verifikasi bahwa session sudah terautentikasi
+                    await client.connect()
                     
-                    # Method 2: Resolve Username (seperti aplikasi mobile)
-                    try:
-                        dummy_mobile_check = await client(functions.contacts.ResolveUsernameRequest(username=username))
-                        if dummy_mobile_check:
-                            logger.info(f"Akun Dummy (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
-                            result = False
-                    except errors.UsernameNotOccupiedError:
-                        logger.info(f"Akun Dummy (mobile check): @{username} TERSEDIA ✅")
-                    except Exception as e:
-                        logger.info(f"Akun Dummy (mobile check) error: {e}")
-                    
-                    await client.disconnect()
-                    return result
+                    # Skip login prompt - pastikan kita sudah terautentikasi
+                    if not await client.is_user_authorized():
+                        logger.warning("Session string tidak valid atau kedaluwarsa, menggunakan metode tanpa login")
+                        await client.disconnect()
+                    else:
+                        # Gunakan client yang sudah terautentikasi untuk memeriksa
+                        logger.info("✅ Berhasil menggunakan akun dummy tanpa perlu login ulang")
+                        
+                        # Method 1: Gunakan CheckUsernameRequest API
+                        result = await client(functions.account.CheckUsernameRequest(username=username))
+                        logger.info(f"Telethon API (dengan akun dummy): @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
+                        
+                        # Method 2: Resolve Username (seperti aplikasi mobile)
+                        try:
+                            dummy_mobile_check = await client(functions.contacts.ResolveUsernameRequest(username=username))
+                            if dummy_mobile_check:
+                                logger.info(f"Akun Dummy (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
+                                result = False
+                        except errors.UsernameNotOccupiedError:
+                            logger.info(f"Akun Dummy (mobile check): @{username} TERSEDIA ✅")
+                        except Exception as e:
+                            logger.info(f"Akun Dummy (mobile check) error: {e}")
+                        
+                        await client.disconnect()
+                        return result
                 except Exception as e:
                     logger.error(f"Error saat menggunakan akun dummy: {e}")
-                    await client.disconnect()
+                    if not client.is_connected():
+                        await client.disconnect()
                     # Lanjutkan ke metode tanpa login di bawah
             
             # Jika tidak ada session string atau gagal gunakan metode tanpa login
