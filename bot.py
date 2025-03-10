@@ -253,6 +253,31 @@ checker = UsernameChecker(None)  # Will operate in limited mode
 
 # This will allow users to generate username variations but won't verify if they're available with Telegram API
 
+# Add debug handler for ALL incoming messages
+# We set group=1 to make it run after command handlers (which have group=0 by default)
+@bot.on_message(filters.all, group=1)
+async def debug_all_messages(client, message):
+    """Log all incoming messages for debugging purposes"""
+    try:
+        user_info = f"{message.from_user.id} ({message.from_user.first_name})" if message.from_user else "Unknown"
+        msg_text = message.text or message.caption or "No text" 
+        logger.info(f"RECEIVED MESSAGE FROM {user_info}: {msg_text}")
+        
+        # Don't process further if it's a command (let command handlers work)
+        if message.text and message.text.startswith('/'):
+            logger.info(f"Message is a command, handled by command handlers")
+            return
+            
+        # Auto-reply with help for non-command messages
+        if message.from_user:
+            logger.info(f"Sending help reply for non-command message")
+            await message.reply(
+                "👋 Selamat datang di bot Generator Username!\n\n"
+                "Gunakan perintah /start untuk memulai atau /help untuk melihat daftar perintah."
+            )
+    except Exception as e:
+        logger.error(f"Error in debug message handler: {str(e)}")
+
 # User management functions
 def can_add_user(user_id):
     """Check if a new user can be added"""
@@ -493,17 +518,22 @@ async def check_specific_username(username, user_id, message_id):
 @bot.on_message(filters.command("start"))
 async def start_command(client, message: Message):
     """Handle /start command"""
+    # Log message for debugging
+    logger.info(f"Received /start command from user: {message.from_user.id} ({message.from_user.first_name})")
+    
     user_id = message.from_user.id
     user_name = message.from_user.first_name
     
     # Add user to active users
     if not can_add_user(user_id):
+        logger.info(f"User {user_id} rejected due to capacity limit")
         await message.reply(
             "❌ Bot sedang dalam kapasitas penuh. Silakan coba lagi nanti."
         )
         return
         
     add_user(user_id)
+    logger.info(f"User {user_id} added to active users")
     
     # Welcome message
     welcome_text = (
@@ -515,6 +545,7 @@ async def start_command(client, message: Message):
         f"Sisa generasi Anda: {get_remaining_generations(user_id)}/{MAX_GENERATIONS_PER_USER}"
     )
     
+    logger.info(f"Sending welcome message to user {user_id}")
     await message.reply(welcome_text)
 
 @bot.on_message(filters.command("help"))
@@ -848,7 +879,7 @@ async def main():
     global checker
     
     try:
-        # Start Flask server in background
+        # Start Flask server in background (just for uptime monitoring)
         flask_thread = threading.Thread(target=run_flask)
         flask_thread.daemon = True
         flask_thread.start()
@@ -857,7 +888,8 @@ async def main():
         # Force set checker to be available in limited mode (no need for session)
         logger.info("📝 Operating bot in limited mode - username generation only, no availability checks")
         
-        # Start the bot - using only bot token, no need for session string
+        # Start the bot with polling mode explicitly enabled
+        # No webhook will be used - pure polling mode
         await bot.start()
         logger.info("✅ Bot is running...")
         
