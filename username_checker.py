@@ -111,7 +111,7 @@ class TelegramUsernameChecker:
 
     async def check_username_with_telethon(self, username: str) -> Optional[bool]:
         """
-        Gunakan Telethon API untuk memeriksa ketersediaan username dengan mencoba set di akun dummy
+        Gunakan Telethon API untuk memeriksa ketersediaan username
         dengan sistem rotasi akun untuk menghindari rate limit
         """
         logger.debug(f"Starting Telethon check for username: {username}")
@@ -145,7 +145,7 @@ class TelegramUsernameChecker:
                 else:
                     logger.warning("⚠️ Session string #2 found but invalid length")
 
-            # Check third session string (NEW)
+            # Check third session string
             third_session = os.environ.get("TELEGRAM_SESSION_STRING_3")
             if third_session:
                 if len(third_session) > 50:
@@ -155,18 +155,20 @@ class TelegramUsernameChecker:
                 else:
                     logger.warning("⚠️ Session string #3 found but invalid length")
 
-            # Try reading from session3.txt as fallback (NEW)
-            try:
-                with open("session3.txt", "r") as file:
-                    session_string = file.read().strip()
-                    if session_string and len(session_string) > 50:
-                        if session_string not in session_strings:
-                            session_strings.append(session_string)
-                            logger.info("✅ Additional session string loaded from session3.txt")
-            except Exception as e:
-                logger.debug(f"Could not read session3.txt: {e}")
-
             logger.info(f"Total valid session strings found: {len(session_strings)}")
+
+            # Check rate limit status for each account
+            for i, _ in enumerate(session_strings):
+                akun_ke = i + 1
+                if hasattr(self, f'_rate_limit_until_{akun_ke}'):
+                    rate_limit_until = getattr(self, f'_rate_limit_until_{akun_ke}')
+                    if datetime.now() < rate_limit_until:
+                        sisa_waktu = (rate_limit_until - datetime.now()).total_seconds()
+                        logger.warning(f"Akun #{akun_ke} masih dalam rate limit, sisa waktu: {int(sisa_waktu)} detik")
+                    else:
+                        logger.info(f"Akun #{akun_ke} sudah bebas dari rate limit")
+                else:
+                    logger.info(f"Akun #{akun_ke} belum pernah kena rate limit")
 
             # Verifikasi dengan multiple dummy accounts
             verification_results = []
@@ -186,7 +188,8 @@ class TelegramUsernameChecker:
                     current_session = session_strings[i]
 
                     # Skip akun yang masih dalam rate limit
-                    if hasattr(self, '_rate_limit_until') and datetime.now() < self._rate_limit_until:
+                    rate_limit_attr = f'_rate_limit_until_{akun_ke}'
+                    if hasattr(self, rate_limit_attr) and datetime.now() < getattr(self, rate_limit_attr):
                         logger.warning(f"Akun #{akun_ke} masih dalam rate limit, skip...")
                         continue
 
@@ -225,8 +228,8 @@ class TelegramUsernameChecker:
 
                     except errors.FloodWaitError as e:
                         logger.warning(f"Rate limit on account #{akun_ke}: {e.seconds}s wait")
-                        # Simpan waktu tunggu untuk rotasi akun
-                        self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
+                        # Simpan waktu tunggu untuk masing-masing akun
+                        setattr(self, f'_rate_limit_until_{akun_ke}', datetime.now() + timedelta(seconds=e.seconds))
                         if client.is_connected():
                             await client.disconnect()
                         continue
@@ -252,7 +255,7 @@ class TelegramUsernameChecker:
                         logger.warning(f"❌ @{username} TIDAK TERSEDIA (only verified by {true_count}/{total_checks} accounts)")
                         return False
 
-            # Fallback to anonymous check jika semua akun gagal/rate limit
+            # Fallback to anonymous check jika semua akun gagal/terkena rate limit
             logger.warning("Semua akun dummy gagal/terkena rate limit, mencoba anonymous check")
 
             # Tambah delay sebelum anonymous check
