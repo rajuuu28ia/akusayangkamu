@@ -509,16 +509,16 @@ class TelegramUsernameChecker:
             second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
             if second_session:
                 session_strings.append(second_session)
-                logger.info("✅ TELEGRAM_SESSION_STRING kedua ditemukan")
+                logger.info("✅ TELEGRAM_SESSION_STRING_2 ditemukan di Secrets")
             else:
-                logger.warning("⚠️ TELEGRAM_SESSION_STRING_2 TIDAK ditemukan")
-                # Coba baca dari file session2.txt
+                logger.warning("⚠️ TELEGRAM_SESSION_STRING_2 TIDAK ditemukan di Secrets")
+                # Coba baca dari file session2.txt sebagai fallback
                 try:
                     with open("session2.txt", "r") as file:
                         session_string = file.read().strip()
                         if session_string:
                             session_strings.append(session_string)
-                            logger.info("✅ Session string kedua berhasil dibaca dari session2.txt")
+                            logger.info("✅ Session string kedua berhasil dibaca dari session2.txt (fallback)")
                 except Exception as e:
                     logger.error(f"Error membaca session2.txt: {e}")
             
