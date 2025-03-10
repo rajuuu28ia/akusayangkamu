@@ -1,13 +1,15 @@
+
 from pyrogram import Client
+import asyncio
 
-# Masukkan API ID dan API Hash kamu
-API_ID = 28320430  # Ganti dengan API ID kamu
-API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"  # Ganti dengan API Hash kamu
-
-# Buat session kedua
-client = Client("session2", api_id=API_ID, api_hash=API_HASH)
+# Gunakan API ID dan API Hash yang sama dengan generate_session.py
+API_ID = 23878472  # Konsisten dengan generate_session.py
+API_HASH = "1cc826615a9cba49bad596370f7823cc"  # Konsisten dengan generate_session.py
 
 async def main():
+    # Buat client untuk session kedua
+    client = Client("session2", api_id=API_ID, api_hash=API_HASH)
+    
     await client.start()
     print("✅ Session kedua berhasil dibuat!")
 
@@ -23,5 +25,6 @@ async def main():
 
     await client.stop()
 
-# Jalankan proses
-client.run(main())
+if __name__ == "__main__":
+    # Jalankan fungsi asynchronous
+    asyncio.run(main())

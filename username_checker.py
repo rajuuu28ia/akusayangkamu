@@ -495,6 +495,15 @@ class TelegramUsernameChecker:
                 logger.info("✅ TELEGRAM_SESSION_STRING utama ditemukan")
             else:
                 logger.warning("⚠️ TELEGRAM_SESSION_STRING utama TIDAK ditemukan")
+                # Coba baca dari file session.txt
+                try:
+                    with open("session.txt", "r") as file:
+                        session_string = file.read().strip()
+                        if session_string:
+                            session_strings.append(session_string)
+                            logger.info("✅ Session string berhasil dibaca dari session.txt")
+                except Exception as e:
+                    logger.error(f"Error membaca session.txt: {e}")
             
             # Cek session string kedua (akun dummy tambahan)
             second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
@@ -503,6 +512,15 @@ class TelegramUsernameChecker:
                 logger.info("✅ TELEGRAM_SESSION_STRING kedua ditemukan")
             else:
                 logger.warning("⚠️ TELEGRAM_SESSION_STRING_2 TIDAK ditemukan")
+                # Coba baca dari file session2.txt
+                try:
+                    with open("session2.txt", "r") as file:
+                        session_string = file.read().strip()
+                        if session_string:
+                            session_strings.append(session_string)
+                            logger.info("✅ Session string kedua berhasil dibaca dari session2.txt")
+                except Exception as e:
+                    logger.error(f"Error membaca session2.txt: {e}")
             
             # Debug informasi untuk memastikan credential ada
             if not session_strings:
