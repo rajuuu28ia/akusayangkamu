@@ -480,74 +480,130 @@ class TelegramUsernameChecker:
             None: jika terjadi error
         """
         try:
-            # Buat client Telegram tanpa session (tidak perlu login untuk ini)
-            # Gunakan kredensial secara langsung (hard-coded untuk demo)
-            # Dalam produksi, ini harus dari environment variables
-            api_id = 26383001  # Nilai dari environment variable TELEGRAM_API_ID
-            api_hash = "eadffb03a33d6a2751ad9e69cbd95f2d"  # Nilai dari environment variable TELEGRAM_API_HASH
+            # Gunakan kredensial dari environment variables (lebih aman)
+            api_id = int(os.environ.get("TELEGRAM_API_ID", "26383001"))  # Default hanya untuk fallback
+            api_hash = os.environ.get("TELEGRAM_API_HASH", "eadffb03a33d6a2751ad9e69cbd95f2d")  # Default hanya untuk fallback
             
             # Cek apakah ada session string untuk akun dummy (lebih akurat)
-            session_string = os.environ.get("TELEGRAM_SESSION_STRING")
+            # Support untuk multiple session strings
+            session_strings = []
+            
+            # Cek session string utama
+            main_session = os.environ.get("TELEGRAM_SESSION_STRING")
+            if main_session:
+                session_strings.append(main_session)
+                logger.info("✅ TELEGRAM_SESSION_STRING utama ditemukan")
+            else:
+                logger.warning("⚠️ TELEGRAM_SESSION_STRING utama TIDAK ditemukan")
+            
+            # Cek session string kedua (akun dummy tambahan)
+            second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
+            if second_session:
+                session_strings.append(second_session)
+                logger.info("✅ TELEGRAM_SESSION_STRING kedua ditemukan")
+            else:
+                logger.warning("⚠️ TELEGRAM_SESSION_STRING_2 TIDAK ditemukan")
+            
+            # Debug informasi untuk memastikan credential ada
+            if not session_strings:
+                logger.warning("⚠️ TIDAK ADA AKUN DUMMY: Session strings tidak ditemukan di environment variables")
+            else:
+                logger.info(f"✅ AKUN DUMMY AKTIF: Total {len(session_strings)} akun dummy tersedia untuk verifikasi")
             
             # Debug log
             logger.info(f"Menggunakan Telegram API untuk check username @{username}")
             
-            # Gunakan session string jika ada (lebih akurat) atau buat client baru tanpa login
-            if session_string:
-                # Gunakan akun dummy dengan session string
-                logger.info("Menggunakan akun dummy untuk verifikasi (lebih akurat)")
-                
-                # Buat client dengan session string yang sudah ada (tidak perlu login ulang)
-                # Load string session dengan koneksi otomatis dan tidak perlu interaksi
-                client = TelegramClient(
-                    StringSession(session_string), 
-                    api_id, 
-                    api_hash,
-                    # Parameter tambahan untuk menghindari interaksi login
-                    device_model="Dummy Checker",
-                    system_version="1.0",
-                    app_version="1.0",
-                    lang_code="en",
-                    system_lang_code="en"
-                )
-                
-                try:
-                    # Hubungkan dan verifikasi bahwa session sudah terautentikasi
-                    await client.connect()
+            # Gunakan session strings jika ada (lebih akurat) atau buat client baru tanpa login
+            if session_strings:
+                # Loop melalui semua session strings yang tersedia (multiple akun dummy)
+                for i, current_session in enumerate(session_strings):
+                    akun_ke = i + 1
+                    logger.info(f"Menggunakan akun dummy #{akun_ke} untuk verifikasi (lebih akurat)")
                     
-                    # Skip login prompt - pastikan kita sudah terautentikasi
-                    if not await client.is_user_authorized():
-                        logger.warning("Session string tidak valid atau kedaluwarsa, menggunakan metode tanpa login")
-                        await client.disconnect()
-                    else:
+                    # Buat client dengan session string yang sudah ada (tidak perlu login ulang)
+                    # Load string session dengan koneksi otomatis dan tidak perlu interaksi
+                    client = TelegramClient(
+                        StringSession(current_session), 
+                        api_id, 
+                        api_hash,
+                        # Parameter tambahan untuk menghindari interaksi login
+                        device_model=f"Dummy Checker #{akun_ke}",
+                        system_version="1.0",
+                        app_version="1.0",
+                        lang_code="en",
+                        system_lang_code="en"
+                    )
+                    
+                    try:
+                        # Hubungkan dan verifikasi bahwa session sudah terautentikasi
+                        # Gunakan phone_callback kosong untuk menghindari input nomor telepon 
+                        async def empty_phone_callback(*args, **kwargs):
+                            logger.error(f"❌ Nomor telepon diminta untuk akun #{akun_ke}, tapi seharusnya tidak perlu dengan session string")
+                            return None  # Jangan pernah memberikan nomor telepon, batalkan saja
+                        
+                        # Set callback kosong untuk menghindari prompt
+                        client.phone_callback = empty_phone_callback
+                        
+                        # Hubungkan klien dengan opsi untuk memastikan tidak ada interaksi manual
+                        await client.connect()
+                        
+                        # Skip login prompt - pastikan kita sudah terautentikasi
+                        if not await client.is_user_authorized():
+                            logger.warning(f"Session string untuk akun #{akun_ke} tidak valid, mencoba akun berikutnya jika ada")
+                            await client.disconnect()
+                            continue  # Coba akun berikutnya jika ada
+                        
                         # Gunakan client yang sudah terautentikasi untuk memeriksa
-                        logger.info("✅ Berhasil menggunakan akun dummy tanpa perlu login ulang")
+                        logger.info(f"✅ Berhasil menggunakan akun dummy #{akun_ke} tanpa perlu login ulang")
                         
                         # Method 1: Gunakan CheckUsernameRequest API
                         result = await client(functions.account.CheckUsernameRequest(username=username))
-                        logger.info(f"Telethon API (dengan akun dummy): @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
+                        logger.info(f"Telethon API (akun dummy #{akun_ke}): @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
                         
                         # Method 2: Resolve Username (seperti aplikasi mobile)
                         try:
                             dummy_mobile_check = await client(functions.contacts.ResolveUsernameRequest(username=username))
                             if dummy_mobile_check:
-                                logger.info(f"Akun Dummy (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
+                                logger.info(f"Akun Dummy #{akun_ke} (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
                                 result = False
                         except errors.UsernameNotOccupiedError:
-                            logger.info(f"Akun Dummy (mobile check): @{username} TERSEDIA ✅")
+                            logger.info(f"Akun Dummy #{akun_ke} (mobile check): @{username} TERSEDIA ✅")
                         except Exception as e:
-                            logger.info(f"Akun Dummy (mobile check) error: {e}")
+                            logger.info(f"Akun Dummy #{akun_ke} (mobile check) error: {e}")
                         
                         await client.disconnect()
                         return result
-                except Exception as e:
-                    logger.error(f"Error saat menggunakan akun dummy: {e}")
-                    if not client.is_connected():
-                        await client.disconnect()
-                    # Lanjutkan ke metode tanpa login di bawah
+                    except errors.FloodWaitError as e:
+                        # Jika akun ini terkena rate limit, log warning dan coba akun berikutnya
+                        logger.warning(f"Akun #{akun_ke} terkena rate limit: {e.seconds} detik. Mencoba akun berikutnya...")
+                        if client.is_connected():
+                            await client.disconnect()
+                        continue  # Coba akun berikutnya jika ada
+                    except Exception as e:
+                        logger.error(f"Error saat menggunakan akun dummy #{akun_ke}: {e}")
+                        if client.is_connected():
+                            await client.disconnect()
+                        continue  # Coba akun berikutnya jika ada
+                
+                # Jika kode sampai di sini, artinya semua akun dummy gagal
+                logger.warning("Semua akun dummy gagal, menggunakan metode tanpa login")
             
             # Jika tidak ada session string atau gagal gunakan metode tanpa login
-            async with TelegramClient(None, api_id, api_hash) as client:
+            client = TelegramClient(None, api_id, api_hash,
+                                    device_model="Username Checker",
+                                    system_version="1.0",
+                                    app_version="1.0",
+                                    lang_code="en")
+            
+            # Gunakan phone_callback kosong untuk menghindari input nomor telepon juga di client kedua
+            async def empty_phone_callback(*args, **kwargs):
+                logger.error("❌ Nomor telepon diminta, tapi ini seharusnya tidak diperlukan untuk cek biasa")
+                return None
+                
+            # Set callback kosong untuk menghindari prompt
+            client.phone_callback = empty_phone_callback
+            
+            async with client:
                 # Gunakan checkUsername API untuk memeriksa ketersediaan
                 try:
                     # Metode 1: Gunakan CheckUsernameRequest API langsung
