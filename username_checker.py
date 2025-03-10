@@ -103,9 +103,9 @@ class TelegramUsernameChecker:
             if main_session:
                 if len(main_session) > 50:  # Basic validation
                     session_strings.append(main_session)
-                    logger.info("✅ Main session string loaded successfully")
+                    logger.info("✅ Session string #1 loaded successfully")
                 else:
-                    logger.warning("⚠️ Main session string found but invalid length")
+                    logger.warning("⚠️ Session string #1 found but invalid length")
 
             # Check second session string
             second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
@@ -113,9 +113,30 @@ class TelegramUsernameChecker:
                 if len(second_session) > 50:
                     if second_session not in session_strings:
                         session_strings.append(second_session)
-                        logger.info("✅ Second session string loaded successfully")
+                        logger.info("✅ Session string #2 loaded successfully")
                 else:
-                    logger.warning("⚠️ Second session string found but invalid length")
+                    logger.warning("⚠️ Session string #2 found but invalid length")
+
+            # Check third session string (NEW)
+            third_session = os.environ.get("TELEGRAM_SESSION_STRING_3")
+            if third_session:
+                if len(third_session) > 50:
+                    if third_session not in session_strings:
+                        session_strings.append(third_session)
+                        logger.info("✅ Session string #3 loaded successfully")
+                else:
+                    logger.warning("⚠️ Session string #3 found but invalid length")
+
+            # Try reading from session3.txt as fallback (NEW)
+            try:
+                with open("session3.txt", "r") as file:
+                    session_string = file.read().strip()
+                    if session_string and len(session_string) > 50:
+                        if session_string not in session_strings:
+                            session_strings.append(session_string)
+                            logger.info("✅ Additional session string loaded from session3.txt")
+            except Exception as e:
+                logger.debug(f"Could not read session3.txt: {e}")
 
             logger.info(f"Total valid session strings found: {len(session_strings)}")
 

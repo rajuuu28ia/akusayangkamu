@@ -1,12 +1,11 @@
-
 import asyncio
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 import os
 
 # Gunakan API ID dan API HASH yang konsisten
-API_ID = 28320430
-API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
+API_ID = 22066651
+API_HASH = "dc03c39dfa3254ab5e39cc738a1adc7b"
 
 async def main():
     # Buat client dengan StringSession
