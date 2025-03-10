@@ -11,6 +11,7 @@ from typing import Optional, Dict, Set, Union
 from config import RESERVED_WORDS
 from telethon import TelegramClient, functions, errors
 from telethon.sessions import StringSession
+from datetime import datetime, timedelta
 
 # Set up detailed logging for this module
 logger = logging.getLogger(__name__)
@@ -42,8 +43,12 @@ class TelegramUsernameChecker:
     async def verify_with_dummy_account(self, client: TelegramClient, username: str, akun_ke: int) -> bool:
         """
         Verifikasi username dengan mencoba set di akun dummy dan membaca response
+        dengan sistem delay dan rotasi untuk menghindari rate limit
         """
         try:
+            # Tambah delay awal untuk menghindari rate limit
+            await asyncio.sleep(2)  # Base delay between checks
+
             # Coba update username
             try:
                 await client(functions.account.UpdateUsernameRequest(username=username))
@@ -52,6 +57,9 @@ class TelegramUsernameChecker:
                 # Kembalikan ke username default untuk akun dummy
                 default_username = f"dummy_checker_{akun_ke}"
                 await client(functions.account.UpdateUsernameRequest(username=default_username))
+
+                # Tambah delay setelah berhasil untuk mencegah rate limit berikutnya
+                await asyncio.sleep(3)
                 return True
 
             except errors.UsernameOccupiedError:
@@ -64,7 +72,9 @@ class TelegramUsernameChecker:
                 logger.warning(f"❌ Akun #{akun_ke}: @{username} tidak bisa dimodifikasi")
                 return False
             except errors.FloodWaitError as e:
-                logger.error(f"⚠️ Akun #{akun_ke} harus menunggu {e.seconds} detik")
+                logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
+                # Simpan waktu tunggu untuk rotasi akun
+                self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
                 return None
 
         except Exception as e:
@@ -74,6 +84,7 @@ class TelegramUsernameChecker:
     async def check_username_with_telethon(self, username: str) -> Optional[bool]:
         """
         Gunakan Telethon API untuk memeriksa ketersediaan username dengan mencoba set di akun dummy
+        dengan sistem rotasi akun untuk menghindari rate limit
         """
         logger.debug(f"Starting Telethon check for username: {username}")
 
@@ -111,10 +122,25 @@ class TelegramUsernameChecker:
             # Verifikasi dengan multiple dummy accounts
             verification_results = []
 
-            # Try using available session strings
+            # Try using available session strings with rotation
             if session_strings:
-                for i, current_session in enumerate(session_strings):
+                # Rotasi urutan akun untuk distribusi beban
+                if not hasattr(self, '_last_account_index'):
+                    self._last_account_index = 0
+
+                # Mulai dari akun terakhir yang digunakan
+                rotated_indices = list(range(len(session_strings)))
+                rotated_indices = rotated_indices[self._last_account_index:] + rotated_indices[:self._last_account_index]
+
+                for i in rotated_indices:
                     akun_ke = i + 1
+                    current_session = session_strings[i]
+
+                    # Skip akun yang masih dalam rate limit
+                    if hasattr(self, '_rate_limit_until') and datetime.now() < self._rate_limit_until:
+                        logger.warning(f"Akun #{akun_ke} masih dalam rate limit, skip...")
+                        continue
+
                     logger.debug(f"Attempting to use dummy account #{akun_ke}")
 
                     client = TelegramClient(
@@ -143,11 +169,15 @@ class TelegramUsernameChecker:
                         result = await self.verify_with_dummy_account(client, username, akun_ke)
                         if result is not None:  # None berarti error/flood wait
                             verification_results.append(result)
+                            # Update last used account index
+                            self._last_account_index = (i + 1) % len(session_strings)
 
                         await client.disconnect()
 
                     except errors.FloodWaitError as e:
                         logger.warning(f"Rate limit on account #{akun_ke}: {e.seconds}s wait")
+                        # Simpan waktu tunggu untuk rotasi akun
+                        self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
                         if client.is_connected():
                             await client.disconnect()
                         continue
@@ -173,8 +203,12 @@ class TelegramUsernameChecker:
                         logger.warning(f"❌ @{username} TIDAK TERSEDIA (only verified by {true_count}/{total_checks} accounts)")
                         return False
 
-            # Fallback to anonymous check jika semua akun gagal
-            logger.warning("Semua akun dummy gagal/flood wait, mencoba anonymous check")
+            # Fallback to anonymous check jika semua akun gagal/rate limit
+            logger.warning("Semua akun dummy gagal/terkena rate limit, mencoba anonymous check")
+
+            # Tambah delay sebelum anonymous check
+            await asyncio.sleep(5)
+
             client = TelegramClient(StringSession(), api_id, api_hash)
 
             try:
