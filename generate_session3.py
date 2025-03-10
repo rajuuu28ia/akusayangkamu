@@ -1,3 +1,4 @@
+
 import asyncio
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
@@ -24,14 +25,14 @@ async def main():
     # Ambil session string
     session_string = client.session.save()
 
-    # Simpan ke file "session2.txt"
-    with open("session2.txt", "w") as file:
+    # Simpan ke file "session3.txt"
+    with open("session3.txt", "w") as file:
         file.write(session_string)
 
-    print("✅ Session kedua berhasil dibuat!")
-    print("💾 Session string kedua berhasil disimpan ke session2.txt")
-    print("🔑 Session String kedua:\n", session_string)
-    print("\nPenting: Tambahkan session string ini ke Secrets dengan nama TELEGRAM_SESSION_STRING_2")
+    print("✅ Session ketiga berhasil dibuat!")
+    print("💾 Session string ketiga berhasil disimpan ke session3.txt")
+    print("🔑 Session String ketiga:\n", session_string)
+    print("\nPenting: Tambahkan session string ini ke Secrets dengan nama TELEGRAM_SESSION_STRING_3")
     
     await client.disconnect()
 

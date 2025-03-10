@@ -6,6 +6,7 @@ import json
 import os
 import time
 import math
+import random
 from lxml import html
 from typing import Optional, Dict, Set, Union
 from config import RESERVED_WORDS
@@ -339,99 +340,102 @@ class TelegramUsernameChecker:
 
         for attempt in range(retries):
             try:
-                async with self.session.get('https://fragment.com') as response:
-                    if response.status != 200:
-                        logger.warning(f'Fragment API returned status {response.status}, retrying...')
-                        await asyncio.sleep(self.base_delay * (attempt + 1))
-                        continue
-
-                    text = await response.text()
-                    tree = html.fromstring(text)
-                    scripts = tree.xpath('//script/text()')
-                    pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
-
-                    api_url = None
-                    for script in scripts:
-                        match = pattern.search(script)
-                        if match:
-                            try:
-                                data = json.loads(match.group(1))
-                                api_url = f'https://fragment.com{data.get("apiUrl")}'
-                                break
-                            except json.JSONDecodeError:
-                                continue
-
-                    if not api_url:
-                        logger.error(f'@{username} API URL not found, retrying...')
-                        await asyncio.sleep(self.base_delay * (attempt + 1))
-                        continue
-
-                    # Check Fragment API
-                    search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
-                    async with self.session.post(api_url, data=search_auctions) as response:
-                        if response.status == 429:  # Rate limit
+                async with self.rate_semaphore: #Added rate limiting here
+                    await asyncio.sleep(random.uniform(1, 3)) #Added random delay
+                    async with self.session.get('https://fragment.com') as response:
+                        if response.status != 200:
+                            logger.warning(f'Fragment API returned status {response.status}, retrying...')
                             await asyncio.sleep(self.base_delay * (attempt + 1))
                             continue
 
-                        response_data = await response.json()
-                        if not isinstance(response_data, dict) or not response_data.get('html'):
-                            logger.warning(f'Invalid response data for @{username}, retrying...')
+                        text = await response.text()
+                        tree = html.fromstring(text)
+                        scripts = tree.xpath('//script/text()')
+                        pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
+
+                        api_url = None
+                        for script in scripts:
+                            match = pattern.search(script)
+                            if match:
+                                try:
+                                    data = json.loads(match.group(1))
+                                    api_url = f'https://fragment.com{data.get("apiUrl")}'
+                                    break
+                                except json.JSONDecodeError:
+                                    continue
+
+                        if not api_url:
+                            logger.error(f'@{username} API URL not found, retrying...')
+                            await asyncio.sleep(self.base_delay * (attempt + 1))
                             continue
 
-                        tree = html.fromstring(response_data.get('html'))
-                        username_data = tree.xpath('//div[contains(@class, "tm-value")]')[:3]
+                        # Check Fragment API
+                        search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
+                        async with self.session.post(api_url, data=search_auctions) as response:
+                            if response.status == 429:  # Rate limit
+                                await asyncio.sleep(self.base_delay * (attempt + 1))
+                                continue
 
-                        if len(username_data) < 3:
-                            logger.warning(f'Incomplete data for @{username}')
-                            return None
+                            response_data = await response.json()
+                            if not isinstance(response_data, dict) or not response_data.get('html'):
+                                logger.warning(f'Invalid response data for @{username}, retrying...')
+                                continue
 
-                        username_tag = username_data[0].text_content()
-                        status = username_data[2].text_content()
-                        price = username_data[1].text_content()
+                            tree = html.fromstring(response_data.get('html'))
+                            username_data = tree.xpath('//div[contains(@class, "tm-value")]')[:3]
 
-                        if username_tag[1:] != username:
-                            logger.warning(f'Username mismatch: {username_tag[1:]} != {username}')
-                            return None
-
-
-                        # Check if username is for sale
-                        if price.isdigit():
-                            logger.info(f'@{username} is for sale: {price}💎')
-                            return None
-
-                        # Final availability check
-                        if status == 'Unavailable':
-                            # Verify with t.me
-                            try:
-                                async with self.session.get(f'https://t.me/{username}') as resp:
-                                    if resp.status in [403, 404, 410]:
-                                        logger.info(f'@{username} not accessible on t.me')
-                                        return None
-
-                                    content = await resp.text()
-                                    if "If you have Telegram, you can contact" not in content:
-
-                                        # Final verification yang lebih terfokus - hanya periksa hal paling penting
-                                        unavailable_indicators = [
-                                            "This username is used by a channel",
-                                            "This username is used by a group"
-                                        ]
-
-                                        if any(indicator in content for indicator in unavailable_indicators):
-                                            logger.info(f'@{username} appears to be used by a channel or group')
-                                            return None
-
-
-                                        logger.info(f'✅ @{username} is Verified Available ✅')
-                                        return True
-                                    else:
-                                        logger.info(f'@{username} is taken (t.me check)')
-                                        return None
-                            except Exception as e:
-                                logger.error(f"Error checking t.me for @{username}: {e}")
+                            if len(username_data) < 3:
+                                logger.warning(f'Incomplete data for @{username}')
                                 return None
 
-                        return None
+                            username_tag = username_data[0].text_content()
+                            status = username_data[2].text_content()
+                            price = username_data[1].text_content()
+
+                            if username_tag[1:] != username:
+                                logger.warning(f'Username mismatch: {username_tag[1:]} != {username}')
+                                return None
+
+
+                            # Check if username is for sale
+                            if price.isdigit():
+                                logger.info(f'@{username} is for sale: {price}💎')
+                                return None
+
+                            # Final availability check
+                            if status == 'Unavailable':
+                                # Verify with t.me
+                                try:
+                                    await asyncio.sleep(random.uniform(1, 2)) #Added random delay
+                                    async with self.session.get(f'https://t.me/{username}') as resp:
+                                        if resp.status in [403, 404, 410]:
+                                            logger.info(f'@{username} not accessible on t.me')
+                                            return None
+
+                                        content = await resp.text()
+                                        if "If you have Telegram, you can contact" not in content:
+
+                                            # Final verification yang lebih terfokus - hanya periksa hal paling penting
+                                            unavailable_indicators = [
+                                                "This username is used by a channel",
+                                                "This username is used by a group"
+                                            ]
+
+                                            if any(indicator in content for indicator in unavailable_indicators):
+                                                logger.info(f'@{username} appears to be used by a channel or group')
+                                                return None
+
+
+                                            logger.info(f'✅ @{username} is Verified Available ✅')
+                                            return True
+                                        else:
+                                            logger.info(f'@{username} is taken (t.me check)')
+                                            return None
+                                except Exception as e:
+                                    logger.error(f"Error checking t.me for @{username}: {e}")
+                                    return None
+
+                            return None
 
             except asyncio.TimeoutError:
                 logger.error(f"Timeout checking @{username}")
