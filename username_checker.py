@@ -42,39 +42,33 @@ class TelegramUsernameChecker:
 
     async def verify_with_dummy_account(self, client: TelegramClient, username: str, akun_ke: int) -> bool:
         """
-        Verifikasi username dengan mencoba set di akun dummy dan membaca response
+        Verifikasi username dengan hanya membaca status tanpa mencoba set username
         dengan sistem delay dan rotasi untuk menghindari rate limit
         """
         try:
             # Tambah delay awal untuk menghindari rate limit
             await asyncio.sleep(2)  # Base delay between checks
 
-            # Coba update username
+            # Method 1: Check username availability
             try:
-                await client(functions.account.UpdateUsernameRequest(username=username))
-                logger.info(f"✅ Akun #{akun_ke}: @{username} berhasil di-set (TERSEDIA)")
+                result = await client(functions.account.CheckUsernameRequest(username=username))
+                if result:
+                    logger.info(f"✅ Akun #{akun_ke}: @{username} available (check method)")
+                    return True
+                else:
+                    logger.warning(f"❌ Akun #{akun_ke}: @{username} not available (check method)")
+                    return False
 
-                # Kembalikan ke username default untuk akun dummy
-                default_username = f"dummy_checker_{akun_ke}"
-                await client(functions.account.UpdateUsernameRequest(username=default_username))
-
-                # Tambah delay setelah berhasil untuk mencegah rate limit berikutnya
-                await asyncio.sleep(3)
-                return True
-
-            except errors.UsernameOccupiedError:
-                logger.warning(f"❌ Akun #{akun_ke}: @{username} sudah diambil")
-                return False
             except errors.UsernameInvalidError:
                 logger.warning(f"❌ Akun #{akun_ke}: @{username} format tidak valid") 
-                return False
-            except errors.UsernameNotModifiedError:
-                logger.warning(f"❌ Akun #{akun_ke}: @{username} tidak bisa dimodifikasi")
                 return False
             except errors.FloodWaitError as e:
                 logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
                 # Simpan waktu tunggu untuk rotasi akun
                 self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
+                return None
+            except Exception as e:
+                logger.error(f"Method 1 error on account #{akun_ke}: {e}")
                 return None
 
         except Exception as e:
