@@ -101,150 +101,18 @@ bot = Client(
 )
 
 # Username checker class - Simplified version that works without user session
-class UsernameChecker:
-    def __init__(self, session_string=None):
-        # In limited mode, we use the bot client itself
-        self.client = None
-        self.limited_mode = True
-        self.last_check_time = 0
-        self.min_delay = RATE_LIMIT_DELAY
-        self.cache = {}
-        self.cache_timeout = 900  # 15 minutes
-        self.running = False
-        logger.info("Username checker initialized in limited mode (no user session)")
-        
-    async def start(self):
-        # In limited mode, we don't start any client
-        logger.info("Username checker in limited mode - not starting client")
-        self.running = True
+# Import the actual checker
+from username_checker_pyrogram import UsernameChecker
+
+# Initialize checker to None first
+checker = None
             
-    async def stop(self):
-        # In limited mode, we don't need to stop any client
-        logger.info("Username checker in limited mode - no client to stop")
-        self.running = False
-    
-    def _enforce_delay(self):
-        """Enforce minimum delay between requests"""
-        current_time = time.time()
-        time_since_last_check = current_time - self.last_check_time
-        
-        if time_since_last_check < self.min_delay:
-            delay_needed = self.min_delay - time_since_last_check
-            time.sleep(delay_needed)
-            
-        self.last_check_time = time.time()
-        
-    async def _handle_flood_wait(self, seconds):
-        """Handle FloodWait by adjusting delay and waiting"""
-        logger.warning(f"FloodWait: {seconds}s")
-        self.min_delay = max(self.min_delay, seconds / 5)
-        await asyncio.sleep(seconds + 0.5)
-        
-    def _is_cached(self, username):
-        """Check if username is in cache and not expired"""
-        if username in self.cache:
-            cache_time, result = self.cache[username]
-            if time.time() - cache_time < self.cache_timeout:
-                return True, result
-        return False, None
-        
-    def _cache_result(self, username, result):
-        """Cache username availability result"""
-        self.cache[username] = (time.time(), result)
-        
-    def _is_valid_username(self, username):
-        """Verify if username follows Telegram format rules"""
-        # Telegram username rules
-        if not 5 <= len(username) <= 32:
-            return False
-        
-        # Must start with a letter, contain only letters, numbers and underscores
-        if not re.match(r'^[a-zA-Z][\w\d_]*$', username):
-            return False
-            
-        # Cannot contain consecutive underscores
-        if '__' in username:
-            return False
-            
-        # Cannot end with an underscore
-        if username.endswith('_'):
-            return False
-            
-        # Check against reserved words
-        if username.lower() in RESERVED_WORDS:
-            return False
-            
-        return True
-        
-    async def check_username(self, username):
-        """
-        Simplified version of check_username for limited mode
-        In limited mode, we only validate format but can't check actual availability
-        """
-        # Pre-validate username format
-        if not self._is_valid_username(username):
-            return {
-                "username": username,
-                "available": False,
-                "valid": False,
-                "type": "invalid_format",
-                "message": "Invalid username format"
-            }
-        
-        # In limited mode, we just validate the format and return unknown status
-        # This avoids the need for Telegram API calls
-        result = {
-            "username": username,
-            "available": False,  # We don't know
-            "valid": True,      # Format is valid
-            "type": "limited_mode",
-            "message": "Bot in limited mode - can't check actual availability"
-        }
-        
-        # Cache the result
-        self._cache_result(username, result)
-        return result
-    
-    async def verify_with_fragment_api(self, username):
-        """Verify username with Fragment API (for banned detection)"""
-        import aiohttp
-        
-        url = f"https://fragment.com/username/{username}"
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        return None
-                        
-                    text = await response.text()
-                    
-                    if "unavailable to register" in text.lower():
-                        return False
-                    if "available for registration" in text.lower():
-                        return True
-                    return None
-                    
-            except Exception as e:
-                logger.error(f"Error checking Fragment API: {str(e)}")
-                return None
-                
-    async def check_usernames_batch(self, usernames, max_concurrency=3):
-        """Check multiple usernames with rate limiting"""
-        results = {}
-        sem = asyncio.Semaphore(max_concurrency)
-        
-        async def check_with_semaphore(username):
-            async with sem:
-                return await self.check_username(username)
-        
-        tasks = [check_with_semaphore(username) for username in usernames]
-        results_list = await asyncio.gather(*tasks)
-        
-        for result in results_list:
-            results[result["username"]] = result
-            
-        return results
+# Create username checker instance in limited mode (no username checking)
+logger.info("Initializing bot in limited mode without full username checker")
+# Create a limited checker instance with no session string dependency
+checker = UsernameChecker(None)  # Will operate in limited mode
+
+# This will allow users to generate username variations but won't verify if they're available with Telegram API
 
 # Create username checker instance in limited mode (no username checking)
 logger.info("Initializing bot in limited mode without full username checker")
