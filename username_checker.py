@@ -12,9 +12,14 @@ from config import RESERVED_WORDS
 from telethon import TelegramClient, functions, errors
 from telethon.sessions import StringSession
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up detailed logging for this module
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Add file handler for username checker specific logs
+file_handler = logging.FileHandler('username_checker.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+logger.addHandler(file_handler)
 
 # Constants
 PREMIUM_USER = 'This account is already subscribed to Telegram Premium.'
@@ -32,14 +37,16 @@ class TelegramUsernameChecker:
         self._username_cache: Dict[str, tuple] = {}  # (result, timestamp)
         self._banned_cache: Set[str] = set()
         self._cache_ttl = 3600  # 1 hour cache
-        
+
+        logger.info("✅ TelegramUsernameChecker initialized successfully")
+
     def _levenshtein_distance(self, s1, s2):
         """Calculate the edit distance between two strings"""
         if len(s1) < len(s2):
             return self._levenshtein_distance(s2, s1)
         if len(s2) == 0:
             return len(s1)
-        
+
         previous_row = list(range(len(s2) + 1))
         for i, c1 in enumerate(s1):
             current_row = [i + 1]
@@ -49,30 +56,30 @@ class TelegramUsernameChecker:
                 substitutions = previous_row[j] + (c1 != c2)
                 current_row.append(min(insertions, deletions, substitutions))
             previous_row = current_row
-            
+
         return previous_row[-1]
-        
+
     def _calculate_entropy(self, text):
         """Calculate Shannon entropy for a string (low values are suspicious)"""
         if not text:
             return 0
-            
+
         entropy = 0
         text_len = len(text)
         char_counts = {}
-        
+
         # Count characters
         for char in text:
             if char in char_counts:
                 char_counts[char] += 1
             else:
                 char_counts[char] = 1
-                
+
         # Calculate entropy
         for count in char_counts.values():
             prob = count / text_len
             entropy -= prob * math.log2(prob)
-            
+
         return entropy
 
     async def is_banned(self, username: str) -> bool:
@@ -81,28 +88,28 @@ class TelegramUsernameChecker:
         with extreme pattern matching and caching - Prefers false positives over false negatives
         """
         username_lower = username.lower()
-        
+
         # Check cache first
         if username in self._banned_cache:
             logger.info(f"@{username} found in banned cache")
             return True
-            
+
         # --- LEVEL 1: BASIC CHECKS ---
-        
+
         # Immediately ban very short usernames (likely premium or reserved)
         if len(username) <= 5:
             logger.info(f"@{username} is too short (<=5 chars) - likely premium/reserved")
             self._banned_cache.add(username)
             return True
-            
+
         # Check against RESERVED_WORDS list from config.py with exact match
         if username_lower in RESERVED_WORDS:
             logger.info(f"@{username} is in RESERVED_WORDS list")
             self._banned_cache.add(username)
             return True
-            
+
         # --- LEVEL 2: SUBSTRING AND SIMILARITY CHECKS ---
-            
+
         # Check if username contains any reserved word as a substring
         for reserved in RESERVED_WORDS:
             # Direct match or close substring
@@ -110,7 +117,7 @@ class TelegramUsernameChecker:
                 logger.info(f"@{username} contains or is contained in reserved word: {reserved}")
                 self._banned_cache.add(username)
                 return True
-                
+
             # Hanya berlaku untuk reserved words yang sangat sensitif
             sensitive_reserved = ['admin', 'telegram', 'support', 'help', 'official', 'mod', 'staff']
             if reserved in sensitive_reserved:
@@ -121,35 +128,35 @@ class TelegramUsernameChecker:
                         logger.info(f"@{username} contains sensitive word: {reserved}")
                         self._banned_cache.add(username)
                         return True
-                    
+
                     # Levenshtein distance check - hanya untuk kata sensitif
                     if self._levenshtein_distance(reserved, username_lower) <= 1:  # Sangat mirip
                         logger.info(f"@{username} has edit distance <= 1 from sensitive word: {reserved}")
                         self._banned_cache.add(username)
                         return True
-        
+
         # --- LEVEL 3: PATTERN MATCHING (Sangat Minimal) ---
-            
+
         # Pola yang sangat MINIMAL untuk username terlarang
         banned_patterns = [
             # Hanya Numeric (angka saja)
             r'^[0-9]+$',
-            
+
             # Hanya untuk Telegram officials yang SANGAT jelas
             r'^(telegram|admin)$',  # Hanya username yang persis sama dengan kata-kata ini
-            
+
             # Username dengan special characters yang dilarang Telegram
             r'^[_.].*|.*[_.]$'  # Hanya username yang dimulai atau diakhiri dengan _ atau .
         ]
-        
+
         for pattern in banned_patterns:
             if re.search(pattern, username, re.IGNORECASE):
                 logger.info(f"@{username} matches banned pattern: {pattern}")
                 self._banned_cache.add(username)
                 return True
-        
+
         # --- LEVEL 4: STATISTICAL CHECKS (KURANGI KEKETATAN) ---
-                
+
         # Check for repetitive characters (level normal)
         char_counts = {}
         for char in username_lower:
@@ -157,27 +164,27 @@ class TelegramUsernameChecker:
                 char_counts[char] += 1
             else:
                 char_counts[char] = 1
-                
+
         for char, count in char_counts.items():
             # Hanya periksa digit berulang untuk username yang dicurigai
             if count >= 3 and char in '0123456789' and len(username) <= 6:  # Three+ digit hanya untuk username pendek
                 logger.info(f"@{username} has {count} instances of digit '{char}' in short username")
                 self._banned_cache.add(username)
                 return True
-                
+
             # Karakter berulang yang sangat berlebihan (4+ kali)
             if count >= 4:  # Empat atau lebih karakter yang sama (kurangi keketatan)
                 logger.info(f"@{username} has excessive {count} instances of '{char}'")
                 self._banned_cache.add(username)
                 return True
-                
+
         # Character distribution check - only for extreme cases
         unique_chars = len(char_counts)
         if unique_chars <= 2 and len(username) > 6:  # Hanya 2 karakter unik pada username panjang
             logger.info(f"@{username} has extremely limited character distribution - only {unique_chars} unique chars")
             self._banned_cache.add(username)
             return True
-            
+
         # Entropy check - hanya untuk kasus ekstrem
         entropy = self._calculate_entropy(username_lower)
         if entropy < 2.0 and len(username) > 6:  # Entropi sangat rendah pada username panjang
@@ -265,7 +272,7 @@ class TelegramUsernameChecker:
         if await self.is_banned(username):
             logger.info(f'@{username} is banned or restricted.')
             return None
-            
+
         # METODE BARU: Periksa dengan Telethon API (akun dummy)
         # Ini adalah metode yang paling akurat karena langsung menggunakan API Telegram
         telethon_result = await self.check_username_with_telethon(username)
@@ -276,7 +283,7 @@ class TelegramUsernameChecker:
             else:
                 logger.info(f'❌ @{username} is Not Available (Telethon API)')
                 return None
-                
+
         # Jika metode Telethon gagal atau tidak tersedia, gunakan metode Fragment sebagai fallback
         logger.info(f'Telethon check failed for @{username}, falling back to Fragment check')
 
@@ -284,17 +291,17 @@ class TelegramUsernameChecker:
         suspicious_patterns = [
             # Official-sounding names (hanya yang sangat sensitif)
             r'^.*admin.*$', r'^.*support.*$', r'^.*telegram.*$', r'^.*official.*$',
-            
+
             # Brand names (hanya yang paling umum diproteksi)
             r'^.*apple.*$', r'^.*google.*$', r'^.*meta.*$', r'^.*facebook.*$',
-            
+
             # Explicit content
             r'^.*porn.*$', r'^.*xxx.*$', r'^.*sex.*$',
-            
+
             # Hanya untuk akun scam yang sangat jelas
             r'^.*spam.*$', r'^.*scam.*$', r'^.*fake.*$'
         ]
-        
+
         if any(re.search(pattern, username.lower()) for pattern in suspicious_patterns):
             self._banned_cache.add(username)
             logger.info(f'@{username} contains suspicious pattern')
@@ -382,16 +389,16 @@ class TelegramUsernameChecker:
                                         if await self.is_banned(username):
                                             logger.info(f'@{username} is banned (final t.me check)')
                                             return None
-                                            
+
                                         # Second, ultra-strict check with direct API validation
                                         try:
                                             # HAPUS SEMUA SPECIAL PATTERN TEST - terlalu ketat
-                                            
+
                                             # Special HTTP headers check - dengan kriteria sangat minim
                                             custom_headers = {
                                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                                             }
-                                            
+
                                             async with self.session.get(f'https://t.me/{username}', headers=custom_headers) as special_check:
                                                 special_content = await special_check.text()
                                                 # Hanya periksa kata-kata kunci banned yang SANGAT SPESIFIK
@@ -404,38 +411,40 @@ class TelegramUsernameChecker:
                                             logger.error(f"Error in ultra-strict check for @{username}: {str(e)}")
                                             # If there's any error in this critical check, assume it's banned
                                             return None
-                                            
+
+
                                         # Hapus semua banned indicators yang terlalu umum
                                         # Hapus semua checkings ban yang tidak eksplisit
                                         # Sekarang kita akan menghentikan pemeriksaan indikator ban di sini
-                                        
+
                                         # Hanya cek indikator yang sangat spesifik dan pasti
                                         unavailable_indicators = [
                                             "This username is used by a channel",
                                             "This username is used by a group"
                                         ]
-                                        
+
                                         if any(indicator in content for indicator in unavailable_indicators):
                                             logger.info(f'@{username} appears to be used by a channel or group')
                                             return None
 
+
                                         # Hapus HEAD request check - menyebabkan terlalu banyak false positive
 
                                         # Ultimate PARANOIA checks - the most extreme filtering possible
-                                        
+
                                         # Final verification yang lebih terfokus - hanya periksa hal paling penting
-                                        
+
                                         # HAPUS PEMERIKSAAN FRAGMENT API YANG MENYEBABKAN FALSE POSITIVES
-                                        # Fragment API terlalu sering mengembalikan halaman yang berisi teks umum yang 
+                                        # Fragment API terlalu sering mengembalikan halaman yang berisi teks umum yang
                                         # menyebabkan false positive
-                                        
+
                                         # Kita akan mengandalkan pemeriksaan dari API Fragment yang dilakukan sebelumnya
                                         # yang lebih akurat (dalam if price.isdigit() check)
-                                        
+
                                         # Hapus verifikasi tambahan ini
                                         # Setiap pemeriksaan tambahan meningkatkan false positive
                                         # Jika sampai di sini, assume username tersedia
-                                        
+
                                         # PASS - Username telah lulus semua verifikasi wajib
                                         logger.info(f'✅ @{username} is Verified Available ✅')
                                         return True
@@ -469,234 +478,142 @@ class TelegramUsernameChecker:
         except Exception as e:
             logger.error(f"Error checking web user {username}: {e}")
             return False
-            
+
     async def check_username_with_telethon(self, username: str) -> Optional[bool]:
         """
         Gunakan Telethon API untuk memeriksa ketersediaan username
-        
-        Returns:
-            True: jika username tersedia
-            False: jika username tidak tersedia
-            None: jika terjadi error
         """
+        logger.debug(f"Starting Telethon check for username: {username}")
         try:
-            # Gunakan kredensial dari environment variables (lebih aman)
-            api_id = int(os.environ.get("TELEGRAM_API_ID", "26383001"))  # Default hanya untuk fallback
-            api_hash = os.environ.get("TELEGRAM_API_HASH", "eadffb03a33d6a2751ad9e69cbd95f2d")  # Default hanya untuk fallback
-            
-            # Cek apakah ada session string untuk akun dummy (lebih akurat)
-            # Support untuk multiple session strings
+            # Get credentials from environment
+            api_id = int(os.environ.get("TELEGRAM_API_ID", "26383001"))
+            api_hash = os.environ.get("TELEGRAM_API_HASH", "eadffb03a33d6a2751ad9e69cbd95f2d")
+
+            logger.debug("Credentials loaded, checking for session strings")
+
+            # Initialize session strings list
             session_strings = []
-            
-            # Cek session string utama
+
+            # Check main session string
             main_session = os.environ.get("TELEGRAM_SESSION_STRING")
             if main_session:
-                session_strings.append(main_session)
-                logger.info("✅ TELEGRAM_SESSION_STRING utama ditemukan")
-            else:
-                logger.warning("⚠️ TELEGRAM_SESSION_STRING utama TIDAK ditemukan")
-                # Coba baca dari file session.txt
-                try:
-                    with open("session.txt", "r") as file:
-                        session_string = file.read().strip()
-                        if session_string:
-                            session_strings.append(session_string)
-                            logger.info("✅ Session string berhasil dibaca dari session.txt")
-                except Exception as e:
-                    logger.error(f"Error membaca session.txt: {e}")
-            
-            # Cek session string kedua (akun dummy tambahan)
-            second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
-            
-            # Debug logging untuk melihat apakah session string ada di environment
-            if second_session:
-                # Verifikasi bahwa session string valid
-                if len(second_session) > 50:  # Minimal panjang session string yang valid
-                    session_strings.append(second_session)
-                    logger.info(f"✅ TELEGRAM_SESSION_STRING_2 ditemukan di Secrets (panjang: {len(second_session)})")
+                if len(main_session) > 50:  # Basic validation
+                    session_strings.append(main_session)
+                    logger.info("✅ Main session string loaded successfully")
                 else:
-                    logger.warning(f"⚠️ TELEGRAM_SESSION_STRING_2 ditemukan di Secrets tapi terlalu pendek: {len(second_session)} karakter")
-            else:
-                logger.warning("⚠️ TELEGRAM_SESSION_STRING_2 TIDAK ditemukan di Secrets")
-            
-            # Selalu coba baca dari file session2.txt sebagai fallback
+                    logger.warning("⚠️ Main session string found but invalid length")
+
+            # Try reading from session.txt
+            try:
+                with open("session.txt", "r") as file:
+                    session_string = file.read().strip()
+                    if session_string and len(session_string) > 50:
+                        if session_string not in session_strings:
+                            session_strings.append(session_string)
+                            logger.info("✅ Additional session string loaded from session.txt")
+            except Exception as e:
+                logger.debug(f"Could not read session.txt: {e}")
+
+            # Check second session string
+            second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
+            if second_session:
+                if len(second_session) > 50:
+                    if second_session not in session_strings:
+                        session_strings.append(second_session)
+                        logger.info("✅ Second session string loaded successfully")
+                else:
+                    logger.warning("⚠️ Second session string found but invalid length")
+
+            # Try reading from session2.txt
             try:
                 with open("session2.txt", "r") as file:
                     session_string = file.read().strip()
                     if session_string and len(session_string) > 50:
-                        # Hanya tambahkan jika belum ada dari Secrets
-                        if not second_session or second_session != session_string:
+                        if session_string not in session_strings:
                             session_strings.append(session_string)
-                            logger.info(f"✅ Session string kedua berhasil dibaca dari session2.txt (panjang: {len(session_string)})")
-                        else:
-                            logger.info("ℹ️ Session string di session2.txt sama dengan yang ada di Secrets")
-                    else:
-                        logger.warning(f"⚠️ Session string di session2.txt terlalu pendek atau kosong: {len(session_string) if session_string else 0} karakter")
+                            logger.info("✅ Additional session string loaded from session2.txt")
             except Exception as e:
-                logger.error(f"Error membaca session2.txt: {e}")
-            
-            # Debug informasi untuk memastikan credential ada
-            if not session_strings:
-                logger.warning("⚠️ TIDAK ADA AKUN DUMMY: Session strings tidak ditemukan di environment variables")
-            else:
-                logger.info(f"✅ AKUN DUMMY AKTIF: Total {len(session_strings)} akun dummy tersedia untuk verifikasi")
-            
-            # Debug log
-            logger.info(f"Menggunakan Telegram API untuk check username @{username}")
-            
-            # Gunakan session strings jika ada (lebih akurat) atau buat client baru tanpa login
+                logger.debug(f"Could not read session2.txt: {e}")
+
+            logger.info(f"Total valid session strings found: {len(session_strings)}")
+
+            # Try using available session strings
             if session_strings:
-                # Loop melalui semua session strings yang tersedia (multiple akun dummy)
                 for i, current_session in enumerate(session_strings):
                     akun_ke = i + 1
-                    logger.info(f"Menggunakan akun dummy #{akun_ke} untuk verifikasi (lebih akurat)")
-                    
-                    # Buat client dengan session string yang sudah ada (tidak perlu login ulang)
-                    # Load string session dengan koneksi otomatis dan tidak perlu interaksi
+                    logger.debug(f"Attempting to use dummy account #{akun_ke}")
+
                     client = TelegramClient(
-                        StringSession(current_session), 
-                        api_id, 
+                        StringSession(current_session),
+                        api_id,
                         api_hash,
-                        # Parameter tambahan untuk menghindari interaksi login
                         device_model=f"Dummy Checker #{akun_ke}",
                         system_version="1.0",
                         app_version="1.0",
                         lang_code="en",
                         system_lang_code="en"
                     )
-                    
+
                     try:
-                        # Hubungkan dan verifikasi bahwa session sudah terautentikasi
-                        # Gunakan phone_callback kosong untuk menghindari input nomor telepon 
-                        async def empty_phone_callback(*args, **kwargs):
-                            logger.error(f"❌ Nomor telepon diminta untuk akun #{akun_ke}, tapi seharusnya tidak perlu dengan session string")
-                            return None  # Jangan pernah memberikan nomor telepon, batalkan saja
-                        
-                        # Set callback kosong untuk menghindari prompt
-                        client.phone_callback = empty_phone_callback
-                        
-                        # Hubungkan klien dengan opsi untuk memastikan tidak ada interaksi manual
+                        logger.debug(f"Connecting dummy account #{akun_ke}")
                         await client.connect()
-                        
-                        # Skip login prompt - pastikan kita sudah terautentikasi
+
                         if not await client.is_user_authorized():
-                            logger.warning(f"Session string untuk akun #{akun_ke} tidak valid, mencoba akun berikutnya jika ada")
+                            logger.warning(f"Session #{akun_ke} not authorized, skipping")
                             await client.disconnect()
-                            continue  # Coba akun berikutnya jika ada
-                        
-                        # Gunakan client yang sudah terautentikasi untuk memeriksa
-                        logger.info(f"✅ Berhasil menggunakan akun dummy #{akun_ke} tanpa perlu login ulang")
-                        
-                        # Method 1: Gunakan CheckUsernameRequest API
+                            continue
+
+                        logger.info(f"✅ Successfully using dummy account #{akun_ke}")
+
+                        # Check username
                         result = await client(functions.account.CheckUsernameRequest(username=username))
-                        logger.info(f"Telethon API (akun dummy #{akun_ke}): @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
-                        
-                        # Method 2: Resolve Username (seperti aplikasi mobile)
+                        status = "TERSEDIA ✅" if result else "TIDAK TERSEDIA ❌"
+                        logger.info(f"Telethon API (akun #{akun_ke}): @{username} {status}")
+
+                        # Additional verification
                         try:
                             dummy_mobile_check = await client(functions.contacts.ResolveUsernameRequest(username=username))
                             if dummy_mobile_check:
-                                logger.info(f"Akun Dummy #{akun_ke} (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
+                                logger.info(f"Mobile check #{akun_ke}: @{username} sudah digunakan")
                                 result = False
                         except errors.UsernameNotOccupiedError:
-                            logger.info(f"Akun Dummy #{akun_ke} (mobile check): @{username} TERSEDIA ✅")
+                            logger.info(f"Mobile check #{akun_ke}: @{username} tersedia")
                         except Exception as e:
-                            logger.info(f"Akun Dummy #{akun_ke} (mobile check) error: {e}")
-                        
+                            logger.debug(f"Mobile check error: {e}")
+
                         await client.disconnect()
                         return result
+
                     except errors.FloodWaitError as e:
-                        # Jika akun ini terkena rate limit, log warning dan coba akun berikutnya
-                        logger.warning(f"Akun #{akun_ke} terkena rate limit: {e.seconds} detik. Mencoba akun berikutnya...")
+                        logger.warning(f"Rate limit on account #{akun_ke}: {e.seconds}s wait")
                         if client.is_connected():
                             await client.disconnect()
-                        continue  # Coba akun berikutnya jika ada
+                        continue
                     except Exception as e:
-                        logger.error(f"Error saat menggunakan akun dummy #{akun_ke}: {e}")
+                        logger.error(f"Error with account #{akun_ke}: {e}")
                         if client.is_connected():
                             await client.disconnect()
-                        continue  # Coba akun berikutnya jika ada
-                
-                # Jika kode sampai di sini, artinya semua akun dummy gagal
-                logger.warning("Semua akun dummy gagal, menggunakan metode tanpa login")
-            
-            # Jika tidak ada session string atau gagal gunakan metode tanpa login
-            client = TelegramClient(None, api_id, api_hash,
-                                    device_model="Username Checker",
-                                    system_version="1.0",
-                                    app_version="1.0",
-                                    lang_code="en")
-            
-            # Gunakan phone_callback kosong untuk menghindari input nomor telepon juga di client kedua
-            async def empty_phone_callback(*args, **kwargs):
-                logger.error("❌ Nomor telepon diminta, tapi ini seharusnya tidak diperlukan untuk cek biasa")
+                        continue
+
+            # Fallback to anonymous check
+            logger.info("All dummy accounts failed/unavailable, trying anonymous check")
+            client = TelegramClient(StringSession(), api_id, api_hash)
+
+            try:
+                await client.connect()
+                result = await client(functions.account.CheckUsernameRequest(username=username))
+                logger.info(f"Anonymous check: @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
+                await client.disconnect()
+                return result
+
+            except Exception as e:
+                logger.error(f"Anonymous check failed: {e}")
+                if client.is_connected():
+                    await client.disconnect()
                 return None
-                
-            # Set callback kosong untuk menghindari prompt
-            client.phone_callback = empty_phone_callback
-            
-            async with client:
-                # Gunakan checkUsername API untuk memeriksa ketersediaan
-                try:
-                    # Metode 1: Gunakan CheckUsernameRequest API langsung
-                    result = await client(functions.account.CheckUsernameRequest(username=username))
-                    
-                    # Metode 2: Periksa juga dengan metode langsung ke perangkat mobile API
-                    # Ini akan memberikan kita pesan "Sorry, this username is taken" vs "is available"
-                    try:
-                        # PERHATIAN: Ini hanya pemeriksaan, TIDAK akan benar-benar mengubah username
-                        # Method ini akan memeriksa seperti aplikasi Telegram mobile
-                        mobile_check_result = await client(functions.contacts.ResolveUsernameRequest(username=username))
-                        if mobile_check_result:
-                            logger.info(f"Telethon API (mobile check): @{username} ditemukan (TIDAK TERSEDIA)")
-                            result = False
-                    except errors.UsernameInvalidError:
-                        logger.info(f"Telethon API (mobile check): @{username} tidak valid")
-                        result = False
-                    except errors.UsernameNotOccupiedError:
-                        # Username tidak ada - ini sebenarnya kabar baik!
-                        logger.info(f"Telethon API (mobile check): @{username} TERSEDIA ✅")
-                        # Kita sebenarnya ingin result = True di sini, tapi kita sudah mengaturnya di atas
-                    except Exception as e:
-                        # Error lain tidak mengubah status result dari CheckUsernameRequest
-                        logger.info(f"Telethon API (mobile check): {e}")
-                        
-                    # Metode 3: Simulasi mencoba mengubah username (tidak benar-benar diubah)
-                    try:
-                        # PERHATIAN: Ini hanya SIMULASI update username, TIDAK akan benar-benar mengubah username
-                        # Kita memeriksa response error message saja, bukan benar-benar update
-                        # API akan memberikan error yang informatif tentang status username
-                        simulated_result = await client(functions.account.UpdateUsernameRequest(username=username))
-                        # Jika tidak ada error, username tersedia - tapi ini tidak akan terjadi
-                        # karena kita belum login/autentikasi
-                        logger.info(f"Telethon API (simulated update): @{username} tersedia")
-                    except errors.UsernameInvalidError:
-                        logger.info(f"Telethon API (simulated update): @{username} tidak valid")
-                        result = False
-                    except errors.UsernameOccupiedError:
-                        logger.info(f"Telethon API (simulated update): @{username} sudah digunakan")
-                        result = False
-                    except errors.UsernameNotModifiedError:
-                        logger.info(f"Telethon API (simulated update): @{username} sama dengan username saat ini")
-                        result = False
-                    except Exception as e:
-                        # Error lain (kemungkinan besar unauthorized karena kita tidak login)
-                        # Ini normal dan kita tetap menggunakan hasil dari CheckUsernameRequest
-                        logger.info(f"Telethon API (simulated update): Error normal karena tidak login: {e}")
-                    
-                    # Gunakan hasil dari CheckUsernameRequest (metode 1)
-                    logger.info(f"Telethon API: @{username} {'TERSEDIA ✅' if result else 'TIDAK TERSEDIA ❌'}")
-                    return result
-                except errors.UsernameInvalidError:
-                    logger.info(f"Telethon API: @{username} tidak valid")
-                    return False
-                except errors.FloodWaitError as e:
-                    logger.error(f"Telethon API: Dibatasi karena rate limit untuk {e.seconds} detik")
-                    return None
-                except Exception as e:
-                    logger.error(f"Telethon API: Error saat check username @{username}: {e}")
-                    return None
+
         except Exception as e:
-            logger.error(f"Error saat menginisialisasi Telethon client: {e}")
+            logger.error(f"Unexpected error in check_username_with_telethon: {e}")
             return None
 
     async def close(self):

@@ -5,20 +5,25 @@ import glob
 import asyncio
 from datetime import datetime, timedelta
 
-# Enhanced logging setup
+# Enhanced logging setup with more detailed output
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,  # Set to DEBUG temporarily for more detailed logs
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    level=logging.INFO,
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.handlers.RotatingFileHandler(
             'bot.log',
             maxBytes=1000000,  # 1MB
-            backupCount=1
+            backupCount=1,
+            encoding='utf-8'
         )
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Set debug level for specific modules
+logging.getLogger('username_checker').setLevel(logging.DEBUG)
+logging.getLogger('telethon').setLevel(logging.INFO)
 
 import re
 import time
@@ -36,7 +41,16 @@ from threading import Thread
 # Replace the TOKEN section with environment variable approach
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
+    logger.error("❌ TELEGRAM_BOT_TOKEN not found in environment variables!")
     TOKEN = "7816290111:AAF9plFT1IU8e5yqAkx0Av4YZ0BAopqMkEg"
+    logger.warning("Using fallback bot token")
+
+# Debug log for secrets
+logger.info("Checking environment variables:")
+logger.info(f"TELEGRAM_API_ID present: {bool(os.getenv('TELEGRAM_API_ID'))}")
+logger.info(f"TELEGRAM_API_HASH present: {bool(os.getenv('TELEGRAM_API_HASH'))}")
+logger.info(f"TELEGRAM_SESSION_STRING present: {bool(os.getenv('TELEGRAM_SESSION_STRING'))}")
+logger.info(f"TELEGRAM_SESSION_STRING_2 present: {bool(os.getenv('TELEGRAM_SESSION_STRING_2'))}")
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
@@ -52,6 +66,7 @@ SUBSCRIBE_MESSAGE = (
 )
 
 # Initialize bot with parse_mode
+logger.info("Initializing Telegram bot...")
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
