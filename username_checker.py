@@ -52,12 +52,10 @@ class TelegramUsernameChecker:
             # Method 1: Check username availability
             try:
                 result = await client(functions.account.CheckUsernameRequest(username=username))
-                if result:
-                    logger.info(f"✅ Akun #{akun_ke}: @{username} available (check method)")
-                    return True
-                else:
+                if not result:
                     logger.warning(f"❌ Akun #{akun_ke}: @{username} not available (check method)")
                     return False
+                logger.info(f"✅ Akun #{akun_ke}: @{username} available (check method)")
 
             except errors.UsernameInvalidError:
                 logger.warning(f"❌ Akun #{akun_ke}: @{username} format tidak valid") 
@@ -70,6 +68,42 @@ class TelegramUsernameChecker:
             except Exception as e:
                 logger.error(f"Method 1 error on account #{akun_ke}: {e}")
                 return None
+
+            # Method 2: Resolve username (lebih ketat)
+            try:
+                resolve_result = await client(functions.contacts.ResolveUsernameRequest(username=username))
+                if resolve_result.users or resolve_result.chats:
+                    logger.warning(f"❌ Akun #{akun_ke}: @{username} sudah digunakan (resolve method)")
+                    return False
+                logger.info(f"✅ Akun #{akun_ke}: @{username} tidak ditemukan (resolve method)")
+
+            except errors.UsernameNotOccupiedError:
+                # Username tidak ada = bagus
+                logger.info(f"✅ Akun #{akun_ke}: @{username} not occupied (resolve method)")
+            except errors.FloodWaitError as e:
+                logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
+                self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
+                return None
+            except Exception as e:
+                logger.error(f"Method 2 error on account #{akun_ke}: {e}")
+                return False
+
+            # Method 3: Get entity check
+            try:
+                entity = await client.get_entity(username)
+                if entity:
+                    logger.warning(f"❌ Akun #{akun_ke}: @{username} sudah ada entitynya")
+                    return False
+            except errors.UsernameNotOccupiedError:
+                # Username tidak ada = bagus
+                logger.info(f"✅ Akun #{akun_ke}: @{username} tidak ada entity")
+            except Exception as e:
+                logger.error(f"Method 3 error on account #{akun_ke}: {e}")
+                # Tidak return False di sini karena error bisa berarti username tidak ada
+
+            # Jika sampai di sini berarti semua check passed
+            logger.info(f"✅ Akun #{akun_ke}: @{username} PASSED all verification methods")
+            return True
 
         except Exception as e:
             logger.error(f"Error saat verifikasi dengan akun #{akun_ke}: {e}")
