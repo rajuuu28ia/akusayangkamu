@@ -401,6 +401,38 @@ class TelegramUsernameChecker:
             logger.error(f"Error checking web user {username}: {e}")
             return False
 
+    async def verify_with_dummy_account(self, client: TelegramClient, username: str, akun_ke: int) -> bool:
+        """
+        Verifikasi username dengan mencoba set di akun dummy dan membaca response
+        """
+        try:
+            # Coba update username
+            try:
+                await client(functions.account.UpdateUsernameRequest(username=username))
+                logger.info(f"✅ Akun #{akun_ke}: @{username} berhasil di-set (TERSEDIA)")
+
+                # Kembalikan ke username default untuk akun dummy
+                default_username = f"dummy_checker_{akun_ke}"
+                await client(functions.account.UpdateUsernameRequest(username=default_username))
+                return True
+
+            except errors.UsernameOccupiedError:
+                logger.warning(f"❌ Akun #{akun_ke}: @{username} sudah diambil")
+                return False
+            except errors.UsernameInvalidError:
+                logger.warning(f"❌ Akun #{akun_ke}: @{username} format tidak valid") 
+                return False
+            except errors.UsernameNotModifiedError:
+                logger.warning(f"❌ Akun #{akun_ke}: @{username} tidak bisa dimodifikasi")
+                return False
+            except errors.FloodWaitError as e:
+                logger.error(f"⚠️ Akun #{akun_ke} harus menunggu {e.seconds} detik")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error saat verifikasi dengan akun #{akun_ke}: {e}")
+            return None
+
     async def check_username_with_telethon(self, username: str) -> Optional[bool]:
         """
         Gunakan Telethon API untuk memeriksa ketersediaan username
@@ -408,31 +440,24 @@ class TelegramUsernameChecker:
         """
         logger.debug(f"Starting Telethon check for username: {username}")
 
-        # Pre-check validasi ekstra
-        if len(username) <= 3:  # Username terlalu pendek pasti tidak valid
-            logger.warning(f"❌ @{username} ditolak: terlalu pendek (<=3 karakter)")
-            return False
-
-        # Tambahan pola terlarang yang lebih ketat
+        # Pre-check validasi ultra ketat
         strict_banned_patterns = [
             r'^[0-9].*',  # Tidak boleh diawali angka
             r'.*[_]{2,}.*',  # Tidak boleh ada underscore berurutan
-            r'.*\d{4,}.*',  # Tidak boleh ada 4+ angka berurutan
-            r'^(admin|support|help|info|bot|official|staff|mod)\d*$',  # Kata-kata terlarang dengan angka opsional
-            r'^[a-zA-Z0-9]{1,2}[0-9]+$',  # 1-2 huruf diikuti hanya angka
-            r'.*(_bot|bot_|_admin|admin_|_staff|staff_|_mod|mod_).*',  # Kata terlarang dengan underscore
-            r'.*[0-9]{5,}.*',  # Tidak boleh ada 5+ angka berurutan di manapun
-            r'^(telegram|tg|gram).*',  # Tidak boleh diawali dengan telegram-related
-            r'.*(support|admin|mod|staff|official).*',  # Kata sensitif di manapun
+            r'.*\d{4,}.*',  # Tidak boleh ada 4+ angka berurutan 
+            r'^(admin|support|help|info|bot|official|staff|mod)\d*$',  # Kata terlarang
+            r'^[a-zA-Z0-9]{1,2}[0-9]+$',  # 1-2 huruf + angka
+            r'.*(_bot|bot_|_admin|admin_|_staff|staff_|_mod|mod_).*',  # Kata terlarang dengan _
+            r'.*[0-9]{5,}.*',  # Tidak boleh ada 5+ angka berurutan
+            r'^(telegram|tg|gram).*',  # Tidak boleh diawali telegram
+            r'.*(support|admin|mod|staff|official).*',  # Kata sensitif
         ]
 
-        logger.info(f"🔍 Memeriksa pola terlarang untuk @{username}")
+        logger.info(f"🔍 Checking strict banned patterns for @{username}")
         for pattern in strict_banned_patterns:
             if re.match(pattern, username.lower()):
-                logger.warning(f"❌ @{username} ditolak: match pola terlarang '{pattern}'")
+                logger.warning(f"❌ @{username} ditolak oleh pola ultra ketat: {pattern}")
                 return False
-
-        logger.info(f"✅ @{username} lolos pemeriksaan pola terlarang")
 
         try:
             # Get credentials from environment
@@ -466,8 +491,7 @@ class TelegramUsernameChecker:
             logger.info(f"Total valid session strings found: {len(session_strings)}")
 
             # Verifikasi dengan multiple dummy accounts
-            is_available = False  # Default false sampai terbukti available
-            verification_count = 0  # Hitung berapa akun yang berhasil verifikasi
+            verification_results = []
 
             # Try using available session strings
             if session_strings:
@@ -497,63 +521,10 @@ class TelegramUsernameChecker:
 
                         logger.info(f"✅ Successfully using dummy account #{akun_ke}")
 
-                        # Multi-method verification
-                        methods_passed = 0
-                        total_methods = 3
-
-                        # Method 1: Check username availability
-                        try:
-                            result = await client(functions.account.CheckUsernameRequest(username=username))
-                            if result:
-                                methods_passed += 1
-                                logger.info(f"Method 1 (Check) - Akun #{akun_ke}: @{username} PASSED ✅")
-                            else:
-                                logger.warning(f"Method 1 (Check) - Akun #{akun_ke}: @{username} FAILED ❌")
-                        except errors.UsernameInvalidError:
-                            logger.warning(f"Method 1 (Check) - Akun #{akun_ke}: @{username} invalid format")
-                        except errors.UsernameNotModifiedError:
-                            logger.warning(f"Method 1 (Check) - Akun #{akun_ke}: @{username} not modified")
-                        except Exception as e:
-                            logger.error(f"Method 1 error on account #{akun_ke}: {e}")
-
-                        # Method 2: Resolve username (lebih ketat)
-                        try:
-                            resolve_result = await client(functions.contacts.ResolveUsernameRequest(username=username))
-                            if not resolve_result:  # Tidak ada user = bagus
-                                methods_passed += 1
-                                logger.info(f"Method 2 (Resolve) - Akun #{akun_ke}: @{username} PASSED ✅")
-                            else:
-                                logger.warning(f"Method 2 (Resolve) - Akun #{akun_ke}: @{username} FAILED ❌")
-                        except errors.UsernameNotOccupiedError:
-                            methods_passed += 1  # Error ini sebenarnya bagus
-                            logger.info(f"Method 2 (Resolve) - Akun #{akun_ke}: @{username} PASSED ✅")
-                        except errors.UsernameInvalidError:
-                            logger.warning(f"Method 2 (Resolve) - Akun #{akun_ke}: @{username} invalid format")
-                        except Exception as e:
-                            logger.error(f"Method 2 error on account #{akun_ke}: {e}")
-
-                        # Method 3: Get user by username
-                        try:
-                            user = await client.get_entity(username)
-                            if user:
-                                logger.warning(f"Method 3 (Get) - Akun #{akun_ke}: @{username} FAILED ❌")
-                            else:
-                                methods_passed += 1
-                                logger.info(f"Method 3 (Get) - Akun #{akun_ke}: @{username} PASSED ✅")
-                        except errors.UsernameNotOccupiedError:
-                            methods_passed += 1  # Username tidak ada = bagus
-                            logger.info(f"Method 3 (Get) - Akun #{akun_ke}: @{username} PASSED ✅")
-                        except errors.UsernameInvalidError:
-                            logger.warning(f"Method 3 (Get) - Akun #{akun_ke}: @{username} invalid format")
-                        except Exception as e:
-                            logger.error(f"Method 3 error on account #{akun_ke}: {e}")
-
-                        # Username dianggap tersedia jika lolos minimal 2 dari 3 metode
-                        if methods_passed >= 2:
-                            verification_count += 1
-                            logger.info(f"Akun #{akun_ke} verifikasi BERHASIL ({methods_passed}/{total_methods} metode)")
-                        else:
-                            logger.warning(f"Akun #{akun_ke} verifikasi GAGAL (hanya {methods_passed}/{total_methods} metode)")
+                        # Verifikasi dengan mencoba set username
+                        result = await self.verify_with_dummy_account(client, username, akun_ke)
+                        if result is not None:  # None berarti error/flood wait
+                            verification_results.append(result)
 
                         await client.disconnect()
 
@@ -562,23 +533,30 @@ class TelegramUsernameChecker:
                         if client.is_connected():
                             await client.disconnect()
                         continue
+
                     except Exception as e:
                         logger.error(f"Error with account #{akun_ke}: {e}")
                         if client.is_connected():
                             await client.disconnect()
                         continue
 
-                # Username dianggap tersedia jika MINIMAL 2 akun memverifikasi
-                is_available = verification_count >= 2
-                if is_available:
-                    logger.info(f"✅ @{username} TERSEDIA (verified by {verification_count} accounts)")
-                else:
-                    logger.warning(f"❌ @{username} TIDAK TERSEDIA (only verified by {verification_count} accounts)")
+                # Analisis hasil verifikasi dari semua akun
+                total_checks = len(verification_results)
+                if total_checks > 0:
+                    true_count = sum(1 for x in verification_results if x)
 
-                return is_available
+                    # Username dianggap tersedia jika minimal 50% akun berhasil
+                    is_available = (true_count / total_checks) >= 0.5
 
-            # Fallback to anonymous check jika tidak ada akun yang berhasil
-            logger.warning("Semua akun dummy gagal, mencoba anonymous check")
+                    if is_available:
+                        logger.info(f"✅ @{username} TERSEDIA (verified by {true_count}/{total_checks} accounts)")
+                        return True
+                    else:
+                        logger.warning(f"❌ @{username} TIDAK TERSEDIA (only verified by {true_count}/{total_checks} accounts)")
+                        return False
+
+            # Fallback to anonymous check jika semua akun gagal
+            logger.warning("Semua akun dummy gagal/flood wait, mencoba anonymous check")
             client = TelegramClient(StringSession(), api_id, api_hash)
 
             try:
@@ -586,21 +564,6 @@ class TelegramUsernameChecker:
                 result = await client(functions.account.CheckUsernameRequest(username=username))
                 status = "TERSEDIA ✅" if result else "TIDAK TERSEDIA ❌"
                 logger.info(f"Anonymous check: @{username} {status}")
-
-                # Tambahan verifikasi untuk anonymous check
-                if result:
-                    try:
-                        entity = await client.get_entity(username)
-                        if entity:
-                            logger.warning(f"Anonymous check: @{username} ternyata sudah ada user")
-                            result = False
-                    except errors.UsernameNotOccupiedError:
-                        logger.info(f"Anonymous check: @{username} konfirmasi tidak ada user")
-                    except:
-                        # Error lain berarti ada masalah - anggap tidak tersedia
-                        logger.warning(f"Anonymous check: @{username} error saat verifikasi tambahan")
-                        result = False
-
                 await client.disconnect()
                 return result
 
