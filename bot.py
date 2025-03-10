@@ -49,8 +49,7 @@ if not TOKEN:
 logger.info("Checking environment variables:")
 logger.info(f"TELEGRAM_API_ID present: {bool(os.getenv('TELEGRAM_API_ID'))}")
 logger.info(f"TELEGRAM_API_HASH present: {bool(os.getenv('TELEGRAM_API_HASH'))}")
-logger.info(f"TELEGRAM_SESSION_STRING present: {bool(os.getenv('TELEGRAM_SESSION_STRING'))}")
-logger.info(f"TELEGRAM_SESSION_STRING_2 present: {bool(os.getenv('TELEGRAM_SESSION_STRING_2'))}")
+logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(os.getenv('TELEGRAM_BOT_TOKEN'))}")
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"

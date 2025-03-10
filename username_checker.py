@@ -115,177 +115,24 @@ class TelegramUsernameChecker:
     async def check_username_with_telethon(self, username: str) -> Optional[bool]:
         """
         Gunakan Telethon API untuk memeriksa ketersediaan username
-        dengan sistem rotasi akun untuk menghindari rate limit
+        tanpa menggunakan session string (anonymous mode only)
         """
-        logger.debug(f"Starting Telethon check for username: {username}")
+        logger.debug(f"Starting anonymous Telethon check for username: {username}")
 
         try:
             # Get credentials from environment
             api_id = int(os.environ.get("TELEGRAM_API_ID", "26383001"))
             api_hash = os.environ.get("TELEGRAM_API_HASH", "eadffb03a33d6a2751ad9e69cbd95f2d")
 
-            logger.debug("Credentials loaded, checking for session strings")
-
-            # Initialize session strings list
-            session_strings = []
-
-            # Check main session string
-            main_session = os.environ.get("TELEGRAM_SESSION_STRING")
-            if main_session:
-                if len(main_session) > 50:  # Basic validation
-                    session_strings.append(main_session)
-                    logger.info("✅ Session string #1 loaded successfully")
-                else:
-                    logger.warning("⚠️ Session string #1 found but invalid length")
-
-            # Check second session string
-            second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
-            if second_session:
-                if len(second_session) > 50:
-                    if second_session not in session_strings:
-                        session_strings.append(second_session)
-                        logger.info("✅ Session string #2 loaded successfully")
-                else:
-                    logger.warning("⚠️ Session string #2 found but invalid length")
-
-            # Check third session string
-            third_session = os.environ.get("TELEGRAM_SESSION_STRING_3")
-            if third_session:
-                if len(third_session) > 50:
-                    if third_session not in session_strings:
-                        session_strings.append(third_session)
-                        logger.info("✅ Session string #3 loaded successfully")
-                else:
-                    logger.warning("⚠️ Session string #3 found but invalid length")
-
-            logger.info(f"Total valid session strings found: {len(session_strings)}")
-
-            # Check rate limit status for each account
-            for i, _ in enumerate(session_strings):
-                akun_ke = i + 1
-                if hasattr(self, f'_rate_limit_until_{akun_ke}'):
-                    rate_limit_until = getattr(self, f'_rate_limit_until_{akun_ke}')
-                    if datetime.now() < rate_limit_until:
-                        sisa_waktu = (rate_limit_until - datetime.now()).total_seconds()
-                        logger.warning(f"Akun #{akun_ke} masih dalam rate limit, sisa waktu: {int(sisa_waktu)} detik")
-                    else:
-                        logger.info(f"Akun #{akun_ke} sudah bebas dari rate limit")
-                else:
-                    logger.info(f"Akun #{akun_ke} belum pernah kena rate limit")
-
-            # Verifikasi dengan multiple dummy accounts
-            verification_results = []
-
-            # Try using available session strings with rotation
-            if session_strings:
-                # Implementasi rotasi akun yang lebih cerdas
-                akun_order = []
-                
-                # Cari akun yang tidak dalam rate limit
-                available_accounts = []
-                for i in range(len(session_strings)):
-                    akun_ke = i + 1
-                    rate_limit_attr = f'_rate_limit_until_{akun_ke}'
-                    if not hasattr(self, rate_limit_attr) or datetime.now() >= getattr(self, rate_limit_attr):
-                        available_accounts.append(i)
-                
-                if available_accounts:
-                    # Gunakan hanya akun yang tidak dalam rate limit
-                    akun_order = available_accounts
-                    # Shuffle untuk distribusi yang lebih merata
-                    random.shuffle(akun_order)
-                    logger.info(f"Menggunakan {len(available_accounts)} akun yang tersedia: {[i+1 for i in available_accounts]}")
-                else:
-                    # Jika semua akun terkena rate limit, gunakan yang memiliki waktu tunggu terpendek
-                    all_accounts = list(range(len(session_strings)))
-                    all_accounts.sort(key=lambda i: getattr(self, f'_rate_limit_until_{i+1}'))
-                    akun_order = all_accounts
-                    
-                    # Log informasi rate limit untuk semua akun
-                    for i in range(len(session_strings)):
-                        akun_ke = i + 1
-                        if hasattr(self, f'_rate_limit_until_{akun_ke}'):
-                            rate_limit_until = getattr(self, f'_rate_limit_until_{akun_ke}')
-                            sisa_waktu = (rate_limit_until - datetime.now()).total_seconds()
-                            logger.warning(f"Semua akun terkena rate limit. Akun #{akun_ke} harus menunggu {int(sisa_waktu)} detik")
-
-                for i in akun_order:
-                    akun_ke = i + 1
-                    current_session = session_strings[i]
-
-                    # Skip akun yang masih dalam rate limit
-                    rate_limit_attr = f'_rate_limit_until_{akun_ke}'
-                    if hasattr(self, rate_limit_attr) and datetime.now() < getattr(self, rate_limit_attr):
-                        logger.warning(f"Skip Akun #{akun_ke}: masih dalam rate limit...")
-                        continue
-
-                    logger.debug(f"Attempting to use dummy account #{akun_ke}")
-
-                    client = TelegramClient(
-                        StringSession(current_session),
-                        api_id,
-                        api_hash,
-                        device_model=f"Dummy Checker #{akun_ke}",
-                        system_version="1.0",
-                        app_version="1.0",
-                        lang_code="en",
-                        system_lang_code="en"
-                    )
-
-                    try:
-                        logger.debug(f"Connecting dummy account #{akun_ke}")
-                        await client.connect()
-
-                        if not await client.is_user_authorized():
-                            logger.warning(f"Session #{akun_ke} not authorized, skipping")
-                            await client.disconnect()
-                            continue
-
-                        logger.info(f"✅ Successfully using dummy account #{akun_ke}")
-
-                        # Verifikasi dengan mencoba set username
-                        result = await self.verify_with_dummy_account(client, username, akun_ke)
-                        if result is not None:  # None berarti error/flood wait
-                            verification_results.append(result)
-
-                        await client.disconnect()
-
-                    except errors.FloodWaitError as e:
-                        logger.warning(f"Rate limit on account #{akun_ke}: {e.seconds}s wait")
-                        # Simpan waktu tunggu untuk masing-masing akun
-                        setattr(self, f'_rate_limit_until_{akun_ke}', datetime.now() + timedelta(seconds=e.seconds))
-                        if client.is_connected():
-                            await client.disconnect()
-                        continue
-
-                    except Exception as e:
-                        logger.error(f"Error with account #{akun_ke}: {e}")
-                        if client.is_connected():
-                            await client.disconnect()
-                        continue
-
-                # Analisis hasil verifikasi dari semua akun
-                total_checks = len(verification_results)
-                if total_checks > 0:
-                    true_count = sum(1 for x in verification_results if x)
-
-                    # Username dianggap tersedia jika minimal 1 akun berhasil verifikasi
-                    is_available = true_count > 0
-
-                    if is_available:
-                        logger.info(f"✅ @{username} TERSEDIA (verified by {true_count}/{total_checks} accounts)")
-                        return True
-                    else:
-                        logger.warning(f"❌ @{username} TIDAK TERSEDIA (only verified by {true_count}/{total_checks} accounts)")
-                        return False
-
-            # Fallback to anonymous check jika semua akun gagal/terkena rate limit
-            logger.warning("Semua akun dummy gagal/terkena rate limit, mencoba anonymous check")
+            logger.debug("Credentials loaded, using anonymous check only")
             
-            # Tambah delay yang lebih tinggi sebelum anonymous check
-            adaptive_delay = random.uniform(7, 10)  # Delay yang lebih tinggi untuk anonymous check
+            # Tambah delay untuk anonymous check
+            adaptive_delay = random.uniform(2, 5)  # Delay yang sesuai untuk anonymous check
             logger.info(f"Menunggu {adaptive_delay:.2f}s sebelum anonymous check untuk menghindari rate limit global")
             await asyncio.sleep(adaptive_delay)
+            
+            # Menggunakan anonymous check
+            logger.info("Menggunakan anonymous check tanpa session string")
 
             client = TelegramClient(StringSession(), api_id, api_hash)
 
