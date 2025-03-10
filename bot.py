@@ -100,26 +100,20 @@ bot = Client(
     ipv6=False  # Disable IPv6 to avoid connectivity issues
 )
 
-# Username checker class - Simplified version that works without user session
-# Import the actual checker
+# Import the actual username checker class
 from username_checker_pyrogram import UsernameChecker
 
-# Initialize checker to None first
-checker = None
-            
-# Create username checker instance in limited mode (no username checking)
-logger.info("Initializing bot in limited mode without full username checker")
-# Create a limited checker instance with no session string dependency
-checker = UsernameChecker(None)  # Will operate in limited mode
+# Check if we have a session string for full mode (availability checking)
+session_string = os.getenv("TELEGRAM_SESSION_STRING")
 
-# This will allow users to generate username variations but won't verify if they're available with Telegram API
-
-# Create username checker instance in limited mode (no username checking)
-logger.info("Initializing bot in limited mode without full username checker")
-# Create a limited checker instance with no session string dependency
-checker = UsernameChecker(None)  # Will operate in limited mode
-
-# This will allow users to generate username variations but won't verify if they're available with Telegram API
+# Initialize the username checker
+logger.info("Initializing username checker...")
+if session_string:
+    logger.info("Found session string, initializing checker in full mode")
+    checker = UsernameChecker(session_string)  # Full mode with availability checking
+else:
+    logger.info("No session string found, initializing checker in limited mode")
+    checker = UsernameChecker(None)  # Limited mode - only username generation
 
 # Add debug handler for ALL incoming messages
 # We set group=1 to make it run after command handlers (which have group=0 by default)
@@ -753,8 +747,11 @@ async def main():
         flask_thread.start()
         logger.info("✅ Flask server is running...")
         
-        # Force set checker to be available in limited mode (no need for session)
-        logger.info("📝 Operating bot in limited mode - username generation only, no availability checks")
+        # Log the bot operation mode based on checker state
+        if checker and not checker.limited_mode:
+            logger.info("📝 Operating bot in full mode - username generation and availability checks")
+        else:
+            logger.info("📝 Operating bot in limited mode - username generation only, no availability checks")
         
         # Start the bot with polling mode explicitly enabled
         # No webhook will be used - pure polling mode
