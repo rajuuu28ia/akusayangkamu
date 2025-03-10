@@ -147,15 +147,16 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
     results = {}
     total_usernames = len(usernames)
     processed = 0
-    
+
     # Start time for tracking
     batch_start_time = time.time()
     logger.info(f"Starting optimized batch check for {total_usernames} usernames with batch size {batch_size}")
-    
+
     # Use semaphore to limit concurrent requests (40 concurrent users)
     concurrency_limit = min(40, batch_size * 2)
+    batch_size = min(20, batch_size)  # Mengurangi batch size
     semaphore = asyncio.Semaphore(concurrency_limit)
-    
+
     async def check_username_with_semaphore(username):
         async with semaphore:
             try:
@@ -163,51 +164,51 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
             except Exception as e:
                 logger.error(f"Error in username check {username}: {str(e)}")
                 return username, None
-    
+
     try:
         # Process in optimized batches
         for i in range(0, total_usernames, batch_size):
             batch = usernames[i:i + batch_size]
             processed += len(batch)
-            
+
             # Create tasks for this batch
             tasks = [check_username_with_semaphore(username) for username in batch]
-            
+
             # Process batch with timeout
             try:
                 async with asyncio.timeout(30):  # 30 second timeout per batch
                     batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                    
+
                     # Process results
                     available_in_batch = 0
                     for result in batch_results:
                         if isinstance(result, Exception):
                             logger.warning(f"Task error: {str(result)}")
                             continue
-                            
+
                         username, is_available = result
                         if is_available is not None:
                             results[username] = is_available
                             if is_available:
                                 available_in_batch += 1
-                    
+
                     # Progress update
                     progress = (processed / total_usernames) * 100
                     logger.info(f"Progress: {progress:.1f}% - Batch found {available_in_batch} available usernames")
-                    
+
                     # Adaptive delay based on batch size to prevent rate limits
                     if i + batch_size < total_usernames:
                         # Calculate adaptive delay: more usernames = slightly longer delay
                         delay = 0.5 + (batch_size / 50)  # 0.5s base + adjustment
                         await asyncio.sleep(delay)
-                        
+
             except asyncio.TimeoutError:
                 logger.error(f"Timeout processing batch starting at username {batch[0]}")
                 continue
-                
+
     except Exception as e:
         logger.error(f"Error in batch processing: {str(e)}")
-        
+
     finally:
         total_time = time.time() - batch_start_time
         logger.info(f"All batches completed in {total_time:.2f}s. Found {len(results)} available usernames")

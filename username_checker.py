@@ -47,8 +47,10 @@ class TelegramUsernameChecker:
         dengan sistem delay dan rotasi untuk menghindari rate limit
         """
         try:
-            # Tambah delay awal untuk menghindari rate limit
-            await asyncio.sleep(2)  # Base delay between checks
+            # Tambah delay awal yang lebih adaptif untuk menghindari rate limit
+            delay = random.uniform(3, 5)  # Delay yang lebih tinggi dan bervariasi
+            logger.debug(f"Menerapkan delay {delay:.2f}s sebelum verifikasi akun #{akun_ke}")
+            await asyncio.sleep(delay)
 
             # Method 1: Check username availability
             try:
@@ -176,14 +178,36 @@ class TelegramUsernameChecker:
 
             # Try using available session strings with rotation
             if session_strings:
-                # Prioritize akun #3 jika tersedia
+                # Implementasi rotasi akun yang lebih cerdas
                 akun_order = []
-                if len(session_strings) >= 3:
-                    # Mulai dari akun #3, lalu #1, lalu #2
-                    akun_order = [2, 0, 1]  # Index 2 = akun #3
+                
+                # Cari akun yang tidak dalam rate limit
+                available_accounts = []
+                for i in range(len(session_strings)):
+                    akun_ke = i + 1
+                    rate_limit_attr = f'_rate_limit_until_{akun_ke}'
+                    if not hasattr(self, rate_limit_attr) or datetime.now() >= getattr(self, rate_limit_attr):
+                        available_accounts.append(i)
+                
+                if available_accounts:
+                    # Gunakan hanya akun yang tidak dalam rate limit
+                    akun_order = available_accounts
+                    # Shuffle untuk distribusi yang lebih merata
+                    random.shuffle(akun_order)
+                    logger.info(f"Menggunakan {len(available_accounts)} akun yang tersedia: {[i+1 for i in available_accounts]}")
                 else:
-                    # Gunakan urutan normal jika tidak ada akun #3
-                    akun_order = list(range(len(session_strings)))
+                    # Jika semua akun terkena rate limit, gunakan yang memiliki waktu tunggu terpendek
+                    all_accounts = list(range(len(session_strings)))
+                    all_accounts.sort(key=lambda i: getattr(self, f'_rate_limit_until_{i+1}'))
+                    akun_order = all_accounts
+                    
+                    # Log informasi rate limit untuk semua akun
+                    for i in range(len(session_strings)):
+                        akun_ke = i + 1
+                        if hasattr(self, f'_rate_limit_until_{akun_ke}'):
+                            rate_limit_until = getattr(self, f'_rate_limit_until_{akun_ke}')
+                            sisa_waktu = (rate_limit_until - datetime.now()).total_seconds()
+                            logger.warning(f"Semua akun terkena rate limit. Akun #{akun_ke} harus menunggu {int(sisa_waktu)} detik")
 
                 for i in akun_order:
                     akun_ke = i + 1
@@ -257,9 +281,11 @@ class TelegramUsernameChecker:
 
             # Fallback to anonymous check jika semua akun gagal/terkena rate limit
             logger.warning("Semua akun dummy gagal/terkena rate limit, mencoba anonymous check")
-
-            # Tambah delay sebelum anonymous check
-            await asyncio.sleep(5)
+            
+            # Tambah delay yang lebih tinggi sebelum anonymous check
+            adaptive_delay = random.uniform(7, 10)  # Delay yang lebih tinggi untuk anonymous check
+            logger.info(f"Menunggu {adaptive_delay:.2f}s sebelum anonymous check untuk menghindari rate limit global")
+            await asyncio.sleep(adaptive_delay)
 
             client = TelegramClient(StringSession(), api_id, api_hash)
 
