@@ -507,20 +507,33 @@ class TelegramUsernameChecker:
             
             # Cek session string kedua (akun dummy tambahan)
             second_session = os.environ.get("TELEGRAM_SESSION_STRING_2")
+            
+            # Debug logging untuk melihat apakah session string ada di environment
             if second_session:
-                session_strings.append(second_session)
-                logger.info("✅ TELEGRAM_SESSION_STRING_2 ditemukan di Secrets")
+                # Verifikasi bahwa session string valid
+                if len(second_session) > 50:  # Minimal panjang session string yang valid
+                    session_strings.append(second_session)
+                    logger.info(f"✅ TELEGRAM_SESSION_STRING_2 ditemukan di Secrets (panjang: {len(second_session)})")
+                else:
+                    logger.warning(f"⚠️ TELEGRAM_SESSION_STRING_2 ditemukan di Secrets tapi terlalu pendek: {len(second_session)} karakter")
             else:
                 logger.warning("⚠️ TELEGRAM_SESSION_STRING_2 TIDAK ditemukan di Secrets")
-                # Coba baca dari file session2.txt sebagai fallback
-                try:
-                    with open("session2.txt", "r") as file:
-                        session_string = file.read().strip()
-                        if session_string:
+            
+            # Selalu coba baca dari file session2.txt sebagai fallback
+            try:
+                with open("session2.txt", "r") as file:
+                    session_string = file.read().strip()
+                    if session_string and len(session_string) > 50:
+                        # Hanya tambahkan jika belum ada dari Secrets
+                        if not second_session or second_session != session_string:
                             session_strings.append(session_string)
-                            logger.info("✅ Session string kedua berhasil dibaca dari session2.txt (fallback)")
-                except Exception as e:
-                    logger.error(f"Error membaca session2.txt: {e}")
+                            logger.info(f"✅ Session string kedua berhasil dibaca dari session2.txt (panjang: {len(session_string)})")
+                        else:
+                            logger.info("ℹ️ Session string di session2.txt sama dengan yang ada di Secrets")
+                    else:
+                        logger.warning(f"⚠️ Session string di session2.txt terlalu pendek atau kosong: {len(session_string) if session_string else 0} karakter")
+            except Exception as e:
+                logger.error(f"Error membaca session2.txt: {e}")
             
             # Debug informasi untuk memastikan credential ada
             if not session_strings:
