@@ -94,7 +94,10 @@ bot = Client(
     ":memory:",  # Use in-memory session to avoid session file issues
     api_id=TELEGRAM_API_ID,
     api_hash=TELEGRAM_API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    workers=8,  # Increase number of workers for better performance
+    parse_mode="markdown",  # Default parse mode for messages
+    ipv6=False  # Disable IPv6 to avoid connectivity issues
 )
 
 # Username checker class - Simplified version that works without user session
@@ -829,10 +832,14 @@ async def handle_generator_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
 
 async def setup_bot():
-    """Setup bot for polling mode"""
+    """Setup bot for polling mode - this explicitly enables polling"""
     try:
-        # Pyrogram doesn't have delete_webhook method, so we skip this step
-        logger.info("Bot setup complete for polling mode")
+        # Client is already initialized in main(), so we skip initialization here
+        
+        # Log status for verification
+        me = await bot.get_me()
+        logger.info(f"Bot setup complete: @{me.username} (ID: {me.id})")
+        logger.info(f"Bot is running in polling mode, ready to receive commands")
     except Exception as e:
         logger.error(f"Error in bot setup: {str(e)}")
 
@@ -857,8 +864,18 @@ async def main():
         # Setup bot for polling mode
         await setup_bot()
         
-        # Keep the bot running, even without checker
-        await idle()
+        # Logging to indicate bot is ready to receive commands
+        logger.info("🤖 Bot is ready to receive commands!")
+        
+        # Manual loop instead of idle to make bot more resilient
+        while True:
+            try:
+                # Keep the bot running by waiting 
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                # Handle cancellation gracefully
+                logger.info("Bot loop cancelled, shutting down...")
+                break
         
     except Exception as e:
         logger.error(f"Error in main function: {str(e)}")
