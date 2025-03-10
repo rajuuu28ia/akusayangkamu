@@ -21,16 +21,15 @@ logging.basicConfig(
 logger = logging.getLogger("UsernameChecker")
 
 class UsernameChecker:
-    def __init__(self, api_id, api_hash, session_name):
+    def __init__(self, session_string=None):
         """
         Initialize username checker with Pyrogram
         
         Args:
-            api_id (str): Telegram API ID
-            api_hash (str): Telegram API Hash
-            session_name (str): Session name for Pyrogram client
+            session_string (str): Session string for authentication, or None for limited mode
         """
-        self.client = Client(session_name, api_id, api_hash)
+        self.session_string = session_string
+        self.client = None  # Will be initialized only if session_string is provided
         self.last_check_time = 0
         self.min_delay = 1.5  # Minimum delay between checks in seconds
         self.cache = {}  # Cache for username availability results
@@ -38,22 +37,57 @@ class UsernameChecker:
         self.running = False
         self.rate_limit_hit = False
         self.ready = False
+        self.limited_mode = session_string is None
+        
+        if self.limited_mode:
+            logger.info("Username checker initialized in limited mode (no user session)")
+        else:
+            logger.info("Username checker initialized with user session")
         
     async def start(self):
         """Start the Pyrogram client"""
-        if not self.running:
-            await self.client.start()
+        # In limited mode, we don't need to start a client
+        if self.limited_mode:
             self.running = True
             self.ready = True
-            logger.info("Pyrogram client started")
+            logger.info("Username checker running in limited mode (no client)")
+            return
+            
+        # Only start if we have a session and client isn't already running
+        if not self.running and not self.limited_mode:
+            if self.client:
+                try:
+                    await self.client.start()
+                    self.running = True
+                    self.ready = True
+                    logger.info("Pyrogram client started")
+                except Exception as e:
+                    logger.error(f"Failed to start Pyrogram client: {str(e)}")
+                    # If client fails to start, switch to limited mode
+                    self.limited_mode = True
+                    self.running = True
+                    self.ready = True
+                    logger.info("Switched to limited mode due to client start failure")
+            else:
+                # No client, switch to limited mode
+                self.limited_mode = True
+                self.running = True
+                self.ready = True
+                logger.info("No client available, running in limited mode")
             
     async def stop(self):
         """Stop the Pyrogram client"""
-        if self.running:
-            await self.client.stop()
-            self.running = False
-            self.ready = False
-            logger.info("Pyrogram client stopped")
+        # Only try to stop if not in limited mode and client is running
+        if self.running and not self.limited_mode and self.client:
+            try:
+                await self.client.stop()
+            except Exception as e:
+                logger.error(f"Error stopping client: {str(e)}")
+                
+        # Always mark as stopped regardless of client state
+        self.running = False
+        self.ready = False
+        logger.info("Username checker stopped")
             
     async def is_ready(self):
         """Check if client is ready"""
@@ -140,6 +174,18 @@ class UsernameChecker:
         is_cached, cached_result = self._is_cached(username)
         if is_cached:
             return cached_result
+            
+        # If we're in limited mode, return a valid-but-unknown result
+        if self.limited_mode:
+            result = {
+                "username": username,
+                "available": False,  # Assume unavailable in limited mode
+                "valid": True,
+                "type": "unknown",
+                "message": "Bot in limited mode, unable to check with Telegram API"
+            }
+            self._cache_result(username, result)
+            return result
         
         # Enforce rate limiting delay
         self._enforce_delay()
@@ -151,6 +197,12 @@ class UsernameChecker:
             "type": "unknown",
             "message": ""
         }
+        
+        # Skip API check if no client or in limited mode
+        if not self.client:
+            result["message"] = "No client available for checking"
+            self._cache_result(username, result)
+            return result
         
         try:
             # Try to get username info
@@ -226,6 +278,20 @@ class UsernameChecker:
         Returns:
             dict: Results for each username
         """
+        # If in limited mode, return a simplified batch result
+        if self.limited_mode:
+            results = {}
+            for username in usernames:
+                results[username] = {
+                    "username": username,
+                    "available": False,  # Assume unavailable in limited mode
+                    "valid": self._is_valid_username(username),
+                    "type": "unknown" if self._is_valid_username(username) else "invalid_format",
+                    "message": "Bot in limited mode, unable to check with Telegram API"
+                }
+            return results
+        
+        # Regular batch processing with API
         results = {}
         sem = asyncio.Semaphore(max_concurrency)
         

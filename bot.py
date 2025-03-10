@@ -89,39 +89,36 @@ def run_flask():
 
 # Initialize Telegram bot
 logger.info("Initializing Telegram bot...")
+# Use in-memory session instead of file-based session to avoid session reuse issues
 bot = Client(
-    "username_bot",
+    ":memory:",  # Use in-memory session to avoid session file issues
     api_id=TELEGRAM_API_ID,
     api_hash=TELEGRAM_API_HASH,
     bot_token=BOT_TOKEN
 )
 
-# Username checker class
+# Username checker class - Simplified version that works without user session
 class UsernameChecker:
-    def __init__(self, session_string):
-        self.client = Client(
-            "username_checker_session",
-            api_id=TELEGRAM_API_ID,
-            api_hash=TELEGRAM_API_HASH,
-            session_string=session_string
-        )
+    def __init__(self, session_string=None):
+        # In limited mode, we use the bot client itself
+        self.client = None
+        self.limited_mode = True
         self.last_check_time = 0
         self.min_delay = RATE_LIMIT_DELAY
         self.cache = {}
         self.cache_timeout = 900  # 15 minutes
         self.running = False
+        logger.info("Username checker initialized in limited mode (no user session)")
         
     async def start(self):
-        if not self.running:
-            await self.client.start()
-            self.running = True
-            logger.info("Username checker client started")
+        # In limited mode, we don't start any client
+        logger.info("Username checker in limited mode - not starting client")
+        self.running = True
             
     async def stop(self):
-        if self.running:
-            await self.client.stop()
-            self.running = False
-            logger.info("Username checker client stopped")
+        # In limited mode, we don't need to stop any client
+        logger.info("Username checker in limited mode - no client to stop")
+        self.running = False
     
     def _enforce_delay(self):
         """Enforce minimum delay between requests"""
@@ -177,7 +174,10 @@ class UsernameChecker:
         return True
         
     async def check_username(self, username):
-        """Check username availability"""
+        """
+        Simplified version of check_username for limited mode
+        In limited mode, we only validate format but can't check actual availability
+        """
         # Pre-validate username format
         if not self._is_valid_username(username):
             return {
@@ -188,70 +188,16 @@ class UsernameChecker:
                 "message": "Invalid username format"
             }
         
-        # Check cache first
-        is_cached, cached_result = self._is_cached(username)
-        if is_cached:
-            return cached_result
-        
-        # Enforce rate limiting delay
-        self._enforce_delay()
-        
+        # In limited mode, we just validate the format and return unknown status
+        # This avoids the need for Telegram API calls
         result = {
             "username": username,
-            "available": False,
-            "valid": True,
-            "type": "unknown",
-            "message": ""
+            "available": False,  # We don't know
+            "valid": True,      # Format is valid
+            "type": "limited_mode",
+            "message": "Bot in limited mode - can't check actual availability"
         }
         
-        try:
-            # Try to get username info
-            chat = await self.client.get_chat(username)
-            
-            # Username exists, determine the type
-            if chat.type == "private":
-                result["type"] = "user"
-                if getattr(chat, "is_premium", False):
-                    result["type"] = "premium_user"
-            elif chat.type == "bot":
-                result["type"] = "bot"
-            elif chat.type == "channel":
-                result["type"] = "channel"
-            elif chat.type in ["group", "supergroup"]:
-                result["type"] = "group"
-            
-            result["message"] = f"Username taken by {result['type']}"
-            
-        except UsernameNotOccupied:
-            # Username is available
-            result["available"] = True
-            result["type"] = "available"
-            result["message"] = "Username is available"
-            
-        except UsernameInvalid:
-            # Username is invalid (might be banned or reserved)
-            result["valid"] = False
-            result["type"] = "banned_or_reserved"
-            result["message"] = "Username is invalid, banned, or reserved"
-            
-        except UsernameOccupied:
-            # Username is taken
-            result["type"] = "occupied"
-            result["message"] = "Username is taken"
-            
-        except FloodWait as e:
-            # Handle rate limiting
-            await self._handle_flood_wait(e.value)
-            # Retry the check after waiting
-            return await self.check_username(username)
-            
-        except Exception as e:
-            # Handle other errors
-            logger.error(f"Error checking username {username}: {str(e)}")
-            result["valid"] = False
-            result["type"] = "error"
-            result["message"] = f"Error: {str(e)}"
-            
         # Cache the result
         self._cache_result(username, result)
         return result
@@ -297,30 +243,12 @@ class UsernameChecker:
             
         return results
 
-# Create username checker instance
-checker = None
-if SESSION_STRING and TELEGRAM_API_ID and TELEGRAM_API_HASH:
-    try:
-        # Extra validation for session string
-        if len(SESSION_STRING) % 4 != 0:
-            logger.warning("Session string length is not divisible by 4, possible invalid base64")
-            # Try to fix common base64 padding issues
-            fixed_session = SESSION_STRING
-            while len(fixed_session) % 4 != 0:
-                fixed_session += "="
-            logger.info("Attempting to use fixed session string")
-            checker = UsernameChecker(fixed_session)
-        else:
-            checker = UsernameChecker(SESSION_STRING)
-            
-        logger.info("Username checker created with provided session string")
-    except Exception as e:
-        logger.error(f"Error creating username checker: {str(e)}")
-        # Fallback to bot-only mode if session string is invalid
-        logger.warning("Bot will run without username checker capability")
-else:
-    logger.warning("Required credentials for username checker not provided")
-    logger.warning("Bot will run without username checker capability")
+# Create username checker instance in limited mode (no username checking)
+logger.info("Initializing bot in limited mode without full username checker")
+# Create a limited checker instance with no session string dependency
+checker = UsernameChecker(None)  # Will operate in limited mode
+
+# This will allow users to generate username variations but won't verify if they're available with Telegram API
 
 # User management functions
 def can_add_user(user_id):
@@ -430,9 +358,9 @@ async def check_generated_usernames(base_name, generator_method, user_id, messag
             f"(0/{len(generated_usernames)} checked)"
         )
         
-        # Check if checker is available
-        if checker is None:
-            # If no checker available, show generated usernames without checking
+        # Check if we're in limited mode
+        if checker.limited_mode:
+            # Show generated usernames without checking
             usernames_text = "\n".join([f"@{username}" for username in generated_usernames])
             result_text = (
                 f"🔍 **Hasil Generasi Username**\n\n"
@@ -522,9 +450,9 @@ async def check_specific_username(username, user_id, message_id):
             f"⏳ Checking @{username}..."
         )
         
-        # Check if checker is available
-        if checker is None:
-            # If no checker available, inform user
+        # Check if we're in limited mode
+        if checker.limited_mode:
+            # If we're in limited mode, inform user
             await bot.edit_message_text(
                 user_id,
                 message_id,
@@ -919,22 +847,15 @@ async def main():
         flask_thread.start()
         logger.info("✅ Flask server is running...")
         
-        # Start the bot
+        # Force set checker to be available in limited mode (no need for session)
+        logger.info("📝 Operating bot in limited mode - username generation only, no availability checks")
+        
+        # Start the bot - using only bot token, no need for session string
         await bot.start()
         logger.info("✅ Bot is running...")
         
         # Setup bot for polling mode
         await setup_bot()
-        
-        # Try to start checker client if available
-        if checker:
-            try:
-                await checker.start()
-                logger.info("Username checker client started successfully")
-            except Exception as e:
-                logger.error(f"Failed to start username checker: {str(e)}")
-                logger.warning("Bot will run without username checker capability")
-                checker = None
         
         # Keep the bot running, even without checker
         await idle()

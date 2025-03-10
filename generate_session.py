@@ -1,26 +1,42 @@
-from telethon.sync import TelegramClient
-from telethon.sessions import StringSession
+import os
+import asyncio
+from pyrogram import Client
+from dotenv import load_dotenv
 
-# Masukkan API ID & API HASH
-API_ID = 23878472
-API_HASH = "1cc826615a9cba49bad596370f7823cc"
+# Load environment variables
+load_dotenv()
 
-# Buat client dengan StringSession (bukan SQLite)
-client = TelegramClient(StringSession(), API_ID, API_HASH)
+# Get API credentials from environment
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
 
 async def main():
-    await client.start()
-    print("✅ Session berhasil dibuat!")
+    """Generate session string using Pyrogram"""
+    print("📱 Memulai proses pembuatan session string...")
+    
+    # Create a new client
+    async with Client(
+        "my_account",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        in_memory=True
+    ) as app:
+        # Get the session string
+        session_string = await app.export_session_string()
+        
+        # Save to file
+        with open("session.txt", "w") as file:
+            file.write(session_string)
+        
+        print("\n✅ Session berhasil dibuat!")
+        print("💾 Session string berhasil disimpan ke session.txt")
+        print("\n🔑 Session String:")
+        print("──────────────────────")
+        print(session_string)
+        print("──────────────────────")
+        print("\n⚠️ PENTING: Jangan bagikan session string ini kepada siapapun!")
+        print("🔒 Session string ini memberikan akses penuh ke akun Telegram Anda.")
 
-    # Ambil session string
-    session_string = client.session.save()
-
-    # Simpan ke file "session.txt"
-    with open("session.txt", "w") as file:
-        file.write(session_string)
-
-    print("💾 Session string berhasil disimpan ke session.txt")
-    print("🔑 Session String:\n", session_string)
-
-with client:
-    client.loop.run_until_complete(main())
+if __name__ == "__main__":
+    # Run the async function
+    asyncio.run(main())
