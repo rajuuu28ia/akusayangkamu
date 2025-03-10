@@ -62,14 +62,14 @@ class TelegramUsernameChecker:
                 return False
             except errors.FloodWaitError as e:
                 logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
-                # Simpan waktu tunggu untuk rotasi akun
-                self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
+                # Simpan waktu tunggu untuk masing-masing akun
+                setattr(self, f'_rate_limit_until_{akun_ke}', datetime.now() + timedelta(seconds=e.seconds))
                 return None
             except Exception as e:
                 logger.error(f"Method 1 error on account #{akun_ke}: {e}")
                 return None
 
-            # Method 2: Resolve username (lebih ketat)
+            # Method 2: Resolve username
             try:
                 resolve_result = await client(functions.contacts.ResolveUsernameRequest(username=username))
                 if resolve_result.users or resolve_result.chats:
@@ -82,7 +82,7 @@ class TelegramUsernameChecker:
                 logger.info(f"✅ Akun #{akun_ke}: @{username} not occupied (resolve method)")
             except errors.FloodWaitError as e:
                 logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
-                self._rate_limit_until = datetime.now() + timedelta(seconds=e.seconds)
+                setattr(self, f'_rate_limit_until_{akun_ke}', datetime.now() + timedelta(seconds=e.seconds))
                 return None
             except Exception as e:
                 logger.error(f"Method 2 error on account #{akun_ke}: {e}")
@@ -175,22 +175,23 @@ class TelegramUsernameChecker:
 
             # Try using available session strings with rotation
             if session_strings:
-                # Rotasi urutan akun untuk distribusi beban
-                if not hasattr(self, '_last_account_index'):
-                    self._last_account_index = 0
+                # Prioritize akun #3 jika tersedia
+                akun_order = []
+                if len(session_strings) >= 3:
+                    # Mulai dari akun #3, lalu #1, lalu #2
+                    akun_order = [2, 0, 1]  # Index 2 = akun #3
+                else:
+                    # Gunakan urutan normal jika tidak ada akun #3
+                    akun_order = list(range(len(session_strings)))
 
-                # Mulai dari akun terakhir yang digunakan
-                rotated_indices = list(range(len(session_strings)))
-                rotated_indices = rotated_indices[self._last_account_index:] + rotated_indices[:self._last_account_index]
-
-                for i in rotated_indices:
+                for i in akun_order:
                     akun_ke = i + 1
                     current_session = session_strings[i]
 
                     # Skip akun yang masih dalam rate limit
                     rate_limit_attr = f'_rate_limit_until_{akun_ke}'
                     if hasattr(self, rate_limit_attr) and datetime.now() < getattr(self, rate_limit_attr):
-                        logger.warning(f"Akun #{akun_ke} masih dalam rate limit, skip...")
+                        logger.warning(f"Skip Akun #{akun_ke}: masih dalam rate limit...")
                         continue
 
                     logger.debug(f"Attempting to use dummy account #{akun_ke}")
@@ -221,8 +222,6 @@ class TelegramUsernameChecker:
                         result = await self.verify_with_dummy_account(client, username, akun_ke)
                         if result is not None:  # None berarti error/flood wait
                             verification_results.append(result)
-                            # Update last used account index
-                            self._last_account_index = (i + 1) % len(session_strings)
 
                         await client.disconnect()
 
@@ -245,8 +244,8 @@ class TelegramUsernameChecker:
                 if total_checks > 0:
                     true_count = sum(1 for x in verification_results if x)
 
-                    # Username dianggap tersedia jika minimal 50% akun berhasil
-                    is_available = (true_count / total_checks) >= 0.5
+                    # Username dianggap tersedia jika minimal 1 akun berhasil verifikasi
+                    is_available = true_count > 0
 
                     if is_available:
                         logger.info(f"✅ @{username} TERSEDIA (verified by {true_count}/{total_checks} accounts)")
