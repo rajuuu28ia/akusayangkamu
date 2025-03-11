@@ -14,8 +14,8 @@ Bot Telegram untuk menghasilkan dan memeriksa variasi username dengan fitur cang
 
 1. Clone repository ini
 ```bash
-git clone https://github.com/rajuuu28ia/akusamakamu.git
-cd akusamakamu
+git clone https://github.com/rajuuu28ia/akusayangkamu.git
+cd akusayangkamu
 ```
 
 2. Install dependencies:
@@ -64,5 +64,4 @@ Silakan buat issue atau pull request jika Anda ingin berkontribusi pada proyek i
 
 ## License
 
-[MIT License](LICENSE)# akusamakamu
-# akusamakamu
+[MIT License](LICENSE)
