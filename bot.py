@@ -140,16 +140,21 @@ async def cmd_start(message: Message):
         return
 
     welcome_msg = (
-        "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
-        "📋 <b>Cara Penggunaan:</b>\n"
-        "• Gunakan command:\n"
-        "   📝 <code>/allusn [username]</code> - Generate semua variasi username\n\n"
-        "📱 <b>Contoh:</b>\n"
-        "   <code>/allusn username</code>\n\n"
-        "⚠️ <b>Penting:</b>\n"
-        "• 📋 Username yang sudah di-generate akan disimpan\n"
-        "• ⏳ Data username akan dihapus otomatis setelah 5 menit\n"
-        "• 💾 Harap simpan hasil generate di chat pribadi Anda"
+        "🔹 Selamat datang di Bot Generator Username Telegram! 🔹\n\n"
+        "🛠 Cara Penggunaan:\n"
+        "Ketik:\n"
+        "📌 <code>/allusn [username]</code> – Buat variasi username dan cek ketersediaannya!\n\n"
+        "📌 Contoh:\n"
+        "<code>/allusn usernamekeren</code>\n\n"
+        "⚡ Fitur:\n"
+        "✅ Cek otomatis apakah username tersedia\n"
+        "✅ Simpan hasil generate sementara (5 menit)\n"
+        "✅ Anti-spam & anti-limit, jadi lebih aman\n"
+        "⏳ Checking banned username masih dalam pengembangan\n\n"
+        "🛑 Penting!\n"
+        "• Username yang dihasilkan akan dihapus setelah 5 menit ⏳\n"
+        "• Jangan spam! Akun yang melanggar bisa diblokir 🚫\n\n"
+        "Coba sekarang dan dapatkan username terbaikmu! 🚀"
     )
     await message.reply(welcome_msg, parse_mode="HTML")
 
