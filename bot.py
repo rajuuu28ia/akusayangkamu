@@ -21,6 +21,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+try:
+    from config import API_ID, API_HASH, BOT_TOKEN, INVITE_LINK, CHANNEL_ID
+except ImportError:
+    logger.error("Please copy config.example.py to config.py and update the values")
+    sys.exit(1)
+
+if not all([API_ID, API_HASH, BOT_TOKEN, INVITE_LINK, CHANNEL_ID]):
+    logger.error("Please update all values in config.py")
+    sys.exit(1)
+
 # Set debug level for specific modules
 logging.getLogger('username_checker').setLevel(logging.DEBUG)
 logging.getLogger('telethon').setLevel(logging.INFO)
@@ -38,24 +48,10 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
-# Telegram API Credentials
-API_ID = "28320430"
-API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
-BOT_TOKEN = "7894481490:AAEUc8oiRhNgMEjSytgXKAYvolmznxJM9n0"
-
-if not BOT_TOKEN:
-    logger.error("❌ Bot token is not set!")
-    sys.exit(1)
-
-# Update channel information with improved message formatting
-INVITE_LINK = "zr6kLxcG7TQ5NGU9"
-CHANNEL_ID = "-1002443114227"  # Fixed numeric format for private channel
-CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
-
 # Create inline keyboard markup
 channel_keyboard = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🔗 Join Channel", url=CHANNEL_LINK)]
+        [InlineKeyboardButton(text="🔗 Join Channel", url=f"https://t.me/+{INVITE_LINK}")]
     ]
 )
 

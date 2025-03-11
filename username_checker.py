@@ -10,10 +10,7 @@ import math
 import random
 from lxml import html
 from typing import Optional, Dict, Set, Union
-from config import RESERVED_WORDS
-from telethon import TelegramClient, functions, errors
-from telethon.sessions import StringSession
-from datetime import datetime, timedelta
+from config import RESERVED_WORDS, API_ID, API_HASH
 
 # Set up detailed logging with rotation
 logger = logging.getLogger(__name__)
@@ -34,9 +31,8 @@ PREMIUM_USER = 'This account is already subscribed to Telegram Premium.'
 CHANNEL = 'Please enter a username assigned to a user.'
 NOT_FOUND = 'No Telegram users found.'
 
-# Telegram API Credentials
-API_ID = "28320430"
-API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
+# Telegram API Credentials (Now imported from config.py)
+
 
 class TelegramUsernameChecker:
     def __init__(self):
@@ -53,9 +49,7 @@ class TelegramUsernameChecker:
         self._request_count = 0
         self._window_start = time.time()
 
-        # API credentials
-        self.api_id = API_ID
-        self.api_hash = API_HASH
+        # API credentials (Now imported from config.py)
 
         # Cleanup old logs on initialization
         self._cleanup_old_logs()
