@@ -8,12 +8,19 @@ import os
 import time
 import math
 import random
+from dotenv import load_dotenv
 from lxml import html
 from typing import Optional, Dict, Set, Union
+
+# Add the current directory to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import RESERVED_WORDS
 from telethon import TelegramClient, functions, errors
 from telethon.sessions import StringSession
 from datetime import datetime, timedelta
+
+# Load environment variables
+load_dotenv()
 
 # Set up detailed logging with rotation
 logger = logging.getLogger(__name__)
@@ -34,9 +41,19 @@ PREMIUM_USER = 'This account is already subscribed to Telegram Premium.'
 CHANNEL = 'Please enter a username assigned to a user.'
 NOT_FOUND = 'No Telegram users found.'
 
-# Telegram API Credentials
-API_ID = "28320430"
-API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
+# Get Telegram API Credentials from .env
+try:
+    API_ID = int(os.getenv("API_ID", "0"))  # Provide default value to prevent None
+    API_HASH = os.getenv("API_HASH")
+
+    if not all([API_ID, API_HASH]):
+        logger.error("❌ Missing required API credentials in .env file!")
+        sys.exit(1)
+    else:
+        logger.info("✅ API credentials loaded successfully")
+except (ValueError, TypeError) as e:
+    logger.error(f"❌ Error loading API credentials: {e}")
+    sys.exit(1)
 
 class TelegramUsernameChecker:
     def __init__(self):

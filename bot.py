@@ -3,9 +3,25 @@ import sys
 import os
 import glob
 import asyncio
+import re
+import time
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.enums import ChatMemberStatus
+from aiogram.client.default import DefaultBotProperties
+from username_generator import UsernameGenerator
+from username_checker import TelegramUsernameChecker
+from username_store import UsernameStore
+from flask import Flask
+from threading import Thread
 
-# Enhanced logging setup with more detailed output
+# Load environment variables
+load_dotenv()
+
+# Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     level=logging.INFO,
@@ -21,30 +37,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Set debug level for specific modules
-logging.getLogger('username_checker').setLevel(logging.DEBUG)
-logging.getLogger('telethon').setLevel(logging.INFO)
+# Telegram API Credentials from .env
+try:
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    API_ID = int(os.getenv("API_ID"))
+    API_HASH = os.getenv("API_HASH")
 
-import re
-import time
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.enums import ChatMemberStatus
-from aiogram.client.default import DefaultBotProperties
-from username_generator import UsernameGenerator
-from username_checker import TelegramUsernameChecker
-from username_store import UsernameStore
-from flask import Flask
-from threading import Thread
-
-# Telegram API Credentials
-API_ID = "28320430"
-API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
-BOT_TOKEN = "7894481490:AAEUc8oiRhNgMEjSytgXKAYvolmznxJM9n0"
-
-if not BOT_TOKEN:
-    logger.error("❌ Bot token is not set!")
+    if not all([BOT_TOKEN, API_ID, API_HASH]):
+        logger.error("❌ Missing required environment variables! Check .env file.")
+        sys.exit(1)
+    else:
+        logger.info("✅ Bot credentials loaded successfully")
+        logger.info(f"API_ID loaded: {bool(API_ID)}")
+        logger.info(f"API_HASH loaded: {bool(API_HASH)}")
+        logger.info(f"BOT_TOKEN loaded: {bool(BOT_TOKEN)}")
+except (ValueError, TypeError) as e:
+    logger.error(f"❌ Error loading environment variables: {e}")
     sys.exit(1)
 
 # Update channel information with improved message formatting
@@ -516,6 +524,7 @@ async def main():
 
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
+    asyncio.create_task(periodic_log_cleanup())
 
     try:
         # Start Flask in a separate thread
