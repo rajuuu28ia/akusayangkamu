@@ -1,3 +1,4 @@
+import logging
 import logging.handlers
 import sys
 import os
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 # Telegram API Credentials from .env
 try:
     BOT_TOKEN = os.getenv("BOT_TOKEN")
-    API_ID = int(os.getenv("API_ID"))
+    API_ID = os.getenv("API_ID")
     API_HASH = os.getenv("API_HASH")
 
     if not all([BOT_TOKEN, API_ID, API_HASH]):
@@ -48,10 +49,7 @@ try:
         sys.exit(1)
     else:
         logger.info("✅ Bot credentials loaded successfully")
-        logger.info(f"API_ID loaded: {bool(API_ID)}")
-        logger.info(f"API_HASH loaded: {bool(API_HASH)}")
-        logger.info(f"BOT_TOKEN loaded: {bool(BOT_TOKEN)}")
-except (ValueError, TypeError) as e:
+except Exception as e:
     logger.error(f"❌ Error loading environment variables: {e}")
     sys.exit(1)
 

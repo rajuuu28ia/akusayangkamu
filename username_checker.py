@@ -1,23 +1,13 @@
-import aiohttp
-import asyncio
+import os
 import logging
 import logging.handlers
+import aiohttp
+import asyncio
 import re
 import json
-import os
 import time
-import math
-import random
 from dotenv import load_dotenv
 from lxml import html
-from typing import Optional, Dict, Set, Union
-
-# Add the current directory to Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from config import RESERVED_WORDS
-from telethon import TelegramClient, functions, errors
-from telethon.sessions import StringSession
-from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -26,7 +16,6 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Rotating file handler with size limit
 handler = logging.handlers.RotatingFileHandler(
     'username_checker.log',
     maxBytes=2*1024*1024,  # 2MB max file size
@@ -42,24 +31,21 @@ CHANNEL = 'Please enter a username assigned to a user.'
 NOT_FOUND = 'No Telegram users found.'
 
 # Get Telegram API Credentials from .env
-try:
-    API_ID = int(os.getenv("API_ID", "0"))  # Provide default value to prevent None
-    API_HASH = os.getenv("API_HASH")
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
 
-    if not all([API_ID, API_HASH]):
-        logger.error("❌ Missing required API credentials in .env file!")
-        sys.exit(1)
-    else:
-        logger.info("✅ API credentials loaded successfully")
-except (ValueError, TypeError) as e:
-    logger.error(f"❌ Error loading API credentials: {e}")
-    sys.exit(1)
+if not all([API_ID, API_HASH]):
+    logger.error("❌ Missing required API credentials in .env file!")
+    exit(1)
+else:
+    logger.info("✅ API credentials loaded successfully")
+
 
 class TelegramUsernameChecker:
     def __init__(self):
-        """Initialize checker with improved rate limiting for 40 concurrent users"""
+        """Initialize checker with improved rate limiting"""
         self.session = aiohttp.ClientSession()
-        self.rate_semaphore = asyncio.Semaphore(40)  # Increased to 40 concurrent users
+        self.rate_semaphore = asyncio.Semaphore(40)
         self.request_times = []
         self.max_requests_per_window = 25  # Maximum requests per time window
         self.time_window = 30  # Time window in seconds
@@ -69,10 +55,6 @@ class TelegramUsernameChecker:
         self._last_request_time = time.time()
         self._request_count = 0
         self._window_start = time.time()
-
-        # API credentials
-        self.api_id = API_ID
-        self.api_hash = API_HASH
 
         # Cleanup old logs on initialization
         self._cleanup_old_logs()
@@ -106,23 +88,21 @@ class TelegramUsernameChecker:
             oldest_request = self.request_times[0]
             time_diff = current_time - oldest_request
             if time_diff < self.time_window:
-                return (self.time_window - time_diff) / self.max_requests_per_window + random.uniform(0.1, 0.3)
+                return (self.time_window - time_diff) / self.max_requests_per_window + 0.2 #Simplified randomness
 
         return self.base_delay
 
-    async def check_fragment_api(self, username: str, retries=3) -> Optional[bool]:
-        """Enhanced check with improved rate limiting and retries"""
+    async def check_fragment_api(self, username: str, retries=3):
+        """Check username availability"""
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$', username):
+            logger.info(f'@{username} invalid format')
+            return None
+
         async with self.rate_semaphore:
             delay = await self._calculate_adaptive_delay()
             await asyncio.sleep(delay)
-
             for attempt in range(retries):
                 try:
-                    # Basic validation
-                    if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$', username):
-                        logger.info(f'@{username} invalid format')
-                        return None
-
                     async with self.session.get('https://fragment.com') as response:
                         if response.status != 200:
                             logger.warning(f'Fragment API status {response.status}, attempt {attempt + 1}')
@@ -130,13 +110,16 @@ class TelegramUsernameChecker:
                             continue
 
                         text = await response.text()
-                        api_url = self._extract_api_url(text)
-                        if not api_url:
-                            continue
+                        tree = html.fromstring(text)
+                        scripts = tree.xpath('//script/text()')
+                        pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
 
-                        result = await self._check_username_availability(api_url, username)
-                        if result is not None:
-                            return result
+                        for script in scripts:
+                            match = pattern.search(script)
+                            if match:
+                                data = json.loads(match.group(1))
+                                api_url = f'https://fragment.com{data.get("apiUrl")}'
+                                return await self._check_username_availability(api_url, username)
 
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout on attempt {attempt + 1} for @{username}")
@@ -148,35 +131,17 @@ class TelegramUsernameChecker:
 
             return None
 
-    def _extract_api_url(self, text: str) -> Optional[str]:
-        """Extract API URL from Fragment page"""
-        try:
-            tree = html.fromstring(text)
-            scripts = tree.xpath('//script/text()')
-            pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
-
-            for script in scripts:
-                match = pattern.search(script)
-                if match:
-                    data = json.loads(match.group(1))
-                    return f'https://fragment.com{data.get("apiUrl")}'
-
-            return None
-        except Exception as e:
-            logger.error(f"Error extracting API URL: {e}")
-            return None
-
-    async def _check_username_availability(self, api_url: str, username: str) -> Optional[bool]:
-        """Check username availability with enhanced error handling"""
+    async def _check_username_availability(self, api_url: str, username: str):
+        """Internal method to check username availability"""
         search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
 
-        async with self.session.post(api_url, data=search_auctions) as response:
-            if response.status == 429:  # Rate limit
-                return None
+        try:
+            async with self.session.post(api_url, data=search_auctions) as response:
+                if response.status != 200:
+                    return None
 
-            try:
                 response_data = await response.json()
-                if not isinstance(response_data, dict) or 'html' not in response_data:
+                if 'html' not in response_data:
                     return None
 
                 tree = html.fromstring(response_data['html'])
@@ -196,20 +161,18 @@ class TelegramUsernameChecker:
 
                 return None
 
-            except Exception as e:
-                logger.error(f"Error processing response for @{username}: {e}")
-                return None
+        except Exception as e:
+            logger.error(f"Error processing response for @{username}: {e}")
+            return None
 
-    async def _verify_unavailable(self, username: str) -> bool:
-        """Verify unavailable status with t.me check"""
+    async def _verify_unavailable(self, username: str):
+        """Verify if username is truly unavailable"""
         try:
             async with self.session.get(f'https://t.me/{username}') as response:
                 if response.status in [403, 404, 410]:
                     return True
-
                 text = await response.text()
                 return "If you have Telegram, you can contact" not in text
-
         except Exception as e:
             logger.error(f"Error verifying @{username}: {e}")
             return False
