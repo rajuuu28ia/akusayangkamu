@@ -34,6 +34,10 @@ PREMIUM_USER = 'This account is already subscribed to Telegram Premium.'
 CHANNEL = 'Please enter a username assigned to a user.'
 NOT_FOUND = 'No Telegram users found.'
 
+# Telegram API Credentials
+API_ID = "28320430"
+API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
+
 class TelegramUsernameChecker:
     def __init__(self):
         """Initialize checker with improved rate limiting for 40 concurrent users"""
@@ -49,9 +53,9 @@ class TelegramUsernameChecker:
         self._request_count = 0
         self._window_start = time.time()
 
-        # Get API credentials from environment
-        self.api_id = os.getenv('TELEGRAM_API_ID')
-        self.api_hash = os.getenv('TELEGRAM_API_HASH')
+        # API credentials
+        self.api_id = API_ID
+        self.api_hash = API_HASH
 
         # Cleanup old logs on initialization
         self._cleanup_old_logs()

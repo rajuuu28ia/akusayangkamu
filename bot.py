@@ -38,17 +38,14 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
-# Replace TOKEN section with proper environment variable handling
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TOKEN:
-    logger.error("❌ TELEGRAM_BOT_TOKEN not found in environment variables!")
-    sys.exit(1)  # Exit if no token provided
+# Telegram API Credentials
+API_ID = "28320430"
+API_HASH = "2a15fdaf244a9f3ec4af7ce0501f9db8"
+BOT_TOKEN = "7894481490:AAEUc8oiRhNgMEjSytgXKAYvolmznxJM9n0"
 
-# Debug log for secrets (without showing actual values)
-logger.info("Checking environment variables:")
-logger.info(f"TELEGRAM_API_ID present: {bool(os.getenv('TELEGRAM_API_ID'))}")
-logger.info(f"TELEGRAM_API_HASH present: {bool(os.getenv('TELEGRAM_API_HASH'))}")
-logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(TOKEN)}")
+if not BOT_TOKEN:
+    logger.error("❌ Bot token is not set!")
+    sys.exit(1)
 
 # Update channel information with improved message formatting
 INVITE_LINK = "zr6kLxcG7TQ5NGU9"
@@ -71,7 +68,7 @@ SUBSCRIBE_MESSAGE = (
 
 # Initialize bot with parse_mode
 logger.info("Initializing Telegram bot...")
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 # User locks to prevent spam
