@@ -29,7 +29,7 @@ import re
 import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from username_generator import UsernameGenerator
@@ -50,16 +50,22 @@ logger.info(f"TELEGRAM_API_ID present: {bool(os.getenv('TELEGRAM_API_ID'))}")
 logger.info(f"TELEGRAM_API_HASH present: {bool(os.getenv('TELEGRAM_API_HASH'))}")
 logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(TOKEN)}")
 
-# Update channel information
+# Update channel information with improved message formatting
 INVITE_LINK = "zr6kLxcG7TQ5NGU9"
 CHANNEL_ID = "-1002443114227"  # Fixed numeric format for private channel
 CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
 
+# Create inline keyboard markup
+channel_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Join Channel", url=CHANNEL_LINK)]
+    ]
+)
+
 # Message when user is not subscribed
 SUBSCRIBE_MESSAGE = (
     "⚠️ <b>Perhatian!</b> ⚠️\n\n"
-    "Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu:\n"
-    f"🔗 {CHANNEL_LINK}\n\n"
+    "Untuk menggunakan bot ini, Anda harus join channel kami terlebih dahulu.\n\n"
     "📝 Setelah join, silakan coba command kembali."
 )
 
@@ -115,6 +121,14 @@ async def check_subscription(user_id: int) -> bool:
             logger.error(f"Alternative check failed: {str(e2)}")
             return False
 
+async def send_subscribe_message(message: Message):
+    """Send subscription message with inline button"""
+    await message.reply(
+        SUBSCRIBE_MESSAGE,
+        parse_mode="HTML",
+        reply_markup=channel_keyboard
+    )
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Send a message when the command /start is issued."""
@@ -122,7 +136,7 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     is_member = await check_subscription(user_id)
     if not is_member:
-        await message.reply(SUBSCRIBE_MESSAGE, parse_mode="HTML")
+        await send_subscribe_message(message)
         return
 
     welcome_msg = (
@@ -146,7 +160,7 @@ async def help_command(message: Message):
     user_id = message.from_user.id
     is_member = await check_subscription(user_id)
     if not is_member:
-        await message.reply(SUBSCRIBE_MESSAGE, parse_mode="HTML")
+        await send_subscribe_message(message)
         return
 
     await cmd_start(message)
@@ -278,7 +292,7 @@ async def handle_allusn(message: Message):
     # Check channel subscription
     is_member = await check_subscription(user_id)
     if not is_member:
-        await message.reply(SUBSCRIBE_MESSAGE, parse_mode="HTML")
+        await send_subscribe_message(message)
         return
 
     # Lock user
