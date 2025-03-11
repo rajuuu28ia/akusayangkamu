@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import logging
+import logging.handlers
 import re
 import json
 import os
@@ -14,14 +15,19 @@ from telethon import TelegramClient, functions, errors
 from telethon.sessions import StringSession
 from datetime import datetime, timedelta
 
-# Set up detailed logging for this module
+# Set up detailed logging with rotation
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
-# Add file handler for username checker specific logs
-file_handler = logging.FileHandler('username_checker.log')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
-logger.addHandler(file_handler)
+# Rotating file handler with size limit
+handler = logging.handlers.RotatingFileHandler(
+    'username_checker.log',
+    maxBytes=2*1024*1024,  # 2MB max file size
+    backupCount=1,  # Keep only 1 backup
+    encoding='utf-8'
+)
+handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
 
 # Constants
 PREMIUM_USER = 'This account is already subscribed to Telegram Premium.'
@@ -30,320 +36,206 @@ NOT_FOUND = 'No Telegram users found.'
 
 class TelegramUsernameChecker:
     def __init__(self):
-        """Initialize checker with improved caching and strict verification"""
+        """Initialize checker with improved rate limiting for 40 concurrent users"""
         self.session = aiohttp.ClientSession()
-        self.rate_semaphore = asyncio.Semaphore(5)
-        self.base_delay = 1
+        self.rate_semaphore = asyncio.Semaphore(40)  # Increased to 40 concurrent users
+        self.request_times = []
+        self.max_requests_per_window = 25  # Maximum requests per time window
+        self.time_window = 30  # Time window in seconds
+        self.base_delay = 0.5  # Reduced base delay
 
-        # Caching for checked usernames
-        self._username_cache: Dict[str, tuple] = {}  # (result, timestamp)
-        self._cache_ttl = 3600  # 1 hour cache
+        # Adaptive delay calculation
+        self._last_request_time = time.time()
+        self._request_count = 0
+        self._window_start = time.time()
 
-        logger.info("✅ TelegramUsernameChecker initialized successfully")
+        # Get API credentials from environment
+        self.api_id = os.getenv('TELEGRAM_API_ID')
+        self.api_hash = os.getenv('TELEGRAM_API_HASH')
 
-    async def verify_with_dummy_account(self, client: TelegramClient, username: str, akun_ke: int) -> bool:
-        """
-        Verifikasi username dengan hanya membaca status tanpa mencoba set username
-        dengan sistem delay dan rotasi untuk menghindari rate limit
-        """
+        # Cleanup old logs on initialization
+        self._cleanup_old_logs()
+
+    def _cleanup_old_logs(self):
+        """Clean up old log files"""
         try:
-            # Tambah delay awal yang lebih adaptif untuk menghindari rate limit
-            delay = random.uniform(3, 5)  # Delay yang lebih tinggi dan bervariasi
-            logger.debug(f"Menerapkan delay {delay:.2f}s sebelum verifikasi akun #{akun_ke}")
+            log_files = [f for f in os.listdir('.') if f.startswith('username_checker.log')]
+            if len(log_files) > 2:  # Keep only current and one backup
+                for old_log in sorted(log_files, key=os.path.getctime)[:-2]:
+                    try:
+                        os.remove(old_log)
+                        logger.info(f"Removed old log file: {old_log}")
+                    except Exception as e:
+                        logger.error(f"Error removing log {old_log}: {e}")
+        except Exception as e:
+            logger.error(f"Error during log cleanup: {e}")
+
+    async def _calculate_adaptive_delay(self):
+        """Calculate adaptive delay based on recent request patterns"""
+        current_time = time.time()
+
+        # Clean old request times
+        self.request_times = [t for t in self.request_times if current_time - t < self.time_window]
+
+        # Add current request
+        self.request_times.append(current_time)
+
+        if len(self.request_times) >= self.max_requests_per_window:
+            # Calculate required delay to stay within rate limits
+            oldest_request = self.request_times[0]
+            time_diff = current_time - oldest_request
+            if time_diff < self.time_window:
+                return (self.time_window - time_diff) / self.max_requests_per_window + random.uniform(0.1, 0.3)
+
+        return self.base_delay
+
+    async def check_fragment_api(self, username: str, retries=3) -> Optional[bool]:
+        """Enhanced check with improved rate limiting and retries"""
+        async with self.rate_semaphore:
+            delay = await self._calculate_adaptive_delay()
             await asyncio.sleep(delay)
 
-            # Method 1: Check username availability
-            try:
-                result = await client(functions.account.CheckUsernameRequest(username=username))
-                if not result:
-                    logger.warning(f"❌ Akun #{akun_ke}: @{username} not available (check method)")
-                    return False
-                logger.info(f"✅ Akun #{akun_ke}: @{username} available (check method)")
+            for attempt in range(retries):
+                try:
+                    # Basic validation
+                    if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$', username):
+                        logger.info(f'@{username} invalid format')
+                        return None
 
-            except errors.UsernameInvalidError:
-                logger.warning(f"❌ Akun #{akun_ke}: @{username} format tidak valid") 
-                return False
-            except errors.FloodWaitError as e:
-                logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
-                # Simpan waktu tunggu untuk masing-masing akun
-                setattr(self, f'_rate_limit_until_{akun_ke}', datetime.now() + timedelta(seconds=e.seconds))
-                return None
-            except Exception as e:
-                logger.error(f"Method 1 error on account #{akun_ke}: {e}")
-                return None
+                    async with self.session.get('https://fragment.com') as response:
+                        if response.status != 200:
+                            logger.warning(f'Fragment API status {response.status}, attempt {attempt + 1}')
+                            await asyncio.sleep(delay * (attempt + 1))
+                            continue
 
-            # Method 2: Resolve username
-            try:
-                resolve_result = await client(functions.contacts.ResolveUsernameRequest(username=username))
-                if resolve_result.users or resolve_result.chats:
-                    logger.warning(f"❌ Akun #{akun_ke}: @{username} sudah digunakan (resolve method)")
-                    return False
-                logger.info(f"✅ Akun #{akun_ke}: @{username} tidak ditemukan (resolve method)")
+                        text = await response.text()
+                        api_url = self._extract_api_url(text)
+                        if not api_url:
+                            continue
 
-            except errors.UsernameNotOccupiedError:
-                # Username tidak ada = bagus
-                logger.info(f"✅ Akun #{akun_ke}: @{username} not occupied (resolve method)")
-            except errors.FloodWaitError as e:
-                logger.error(f"⚠️ Akun #{akun_ke} terkena rate limit: harus menunggu {e.seconds} detik")
-                setattr(self, f'_rate_limit_until_{akun_ke}', datetime.now() + timedelta(seconds=e.seconds))
-                return None
-            except Exception as e:
-                logger.error(f"Method 2 error on account #{akun_ke}: {e}")
-                return False
+                        result = await self._check_username_availability(api_url, username)
+                        if result is not None:
+                            return result
 
-            # Method 3: Get entity check
-            try:
-                entity = await client.get_entity(username)
-                if entity:
-                    logger.warning(f"❌ Akun #{akun_ke}: @{username} sudah ada entitynya")
-                    return False
-            except errors.UsernameNotOccupiedError:
-                # Username tidak ada = bagus
-                logger.info(f"✅ Akun #{akun_ke}: @{username} tidak ada entity")
-            except Exception as e:
-                logger.error(f"Method 3 error on account #{akun_ke}: {e}")
-                # Tidak return False di sini karena error bisa berarti username tidak ada
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout on attempt {attempt + 1} for @{username}")
+                except Exception as e:
+                    logger.error(f"Error checking @{username}: {e}")
 
-            # Jika sampai di sini berarti semua check passed
-            logger.info(f"✅ Akun #{akun_ke}: @{username} PASSED all verification methods")
-            return True
+                if attempt < retries - 1:
+                    await asyncio.sleep(delay * (attempt + 1))
 
-        except Exception as e:
-            logger.error(f"Error saat verifikasi dengan akun #{akun_ke}: {e}")
             return None
 
-    async def check_username_with_telethon(self, username: str) -> Optional[bool]:
-        """
-        Gunakan Telethon API untuk memeriksa ketersediaan username
-        tanpa menggunakan session string (anonymous mode only)
-        """
-        logger.debug(f"Starting anonymous Telethon check for username: {username}")
-
+    def _extract_api_url(self, text: str) -> Optional[str]:
+        """Extract API URL from Fragment page"""
         try:
-            # Get credentials from environment
-            api_id = int(os.environ.get("TELEGRAM_API_ID", "26383001"))
-            api_hash = os.environ.get("TELEGRAM_API_HASH", "eadffb03a33d6a2751ad9e69cbd95f2d")
+            tree = html.fromstring(text)
+            scripts = tree.xpath('//script/text()')
+            pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
 
-            logger.debug("Credentials loaded, using anonymous check only")
-            
-            # Tambah delay untuk anonymous check
-            adaptive_delay = random.uniform(2, 5)  # Delay yang sesuai untuk anonymous check
-            logger.info(f"Menunggu {adaptive_delay:.2f}s sebelum anonymous check untuk menghindari rate limit global")
-            await asyncio.sleep(adaptive_delay)
-            
-            # Menggunakan anonymous check
-            logger.info("Menggunakan anonymous check tanpa session string")
+            for script in scripts:
+                match = pattern.search(script)
+                if match:
+                    data = json.loads(match.group(1))
+                    return f'https://fragment.com{data.get("apiUrl")}'
 
-            client = TelegramClient(StringSession(), api_id, api_hash)
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting API URL: {e}")
+            return None
 
-            try:
-                await client.connect()
-                result = await client(functions.account.CheckUsernameRequest(username=username))
-                status = "TERSEDIA ✅" if result else "TIDAK TERSEDIA ❌"
-                logger.info(f"Anonymous check: @{username} {status}")
-                await client.disconnect()
-                return result
+    async def _check_username_availability(self, api_url: str, username: str) -> Optional[bool]:
+        """Check username availability with enhanced error handling"""
+        search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
 
-            except Exception as e:
-                logger.error(f"Anonymous check failed: {e}")
-                if client.is_connected():
-                    await client.disconnect()
+        async with self.session.post(api_url, data=search_auctions) as response:
+            if response.status == 429:  # Rate limit
                 return None
 
+            try:
+                response_data = await response.json()
+                if not isinstance(response_data, dict) or 'html' not in response_data:
+                    return None
+
+                tree = html.fromstring(response_data['html'])
+                username_data = tree.xpath('//div[contains(@class, "tm-value")]')[:3]
+
+                if len(username_data) < 3:
+                    return None
+
+                status = username_data[2].text_content()
+                price = username_data[1].text_content()
+
+                if price.isdigit():
+                    return None
+
+                if status == 'Unavailable':
+                    return await self._verify_unavailable(username)
+
+                return None
+
+            except Exception as e:
+                logger.error(f"Error processing response for @{username}: {e}")
+                return None
+
+    async def _verify_unavailable(self, username: str) -> bool:
+        """Verify unavailable status with t.me check"""
+        try:
+            async with self.session.get(f'https://t.me/{username}') as response:
+                if response.status in [403, 404, 410]:
+                    return True
+
+                text = await response.text()
+                return "If you have Telegram, you can contact" not in text
+
         except Exception as e:
-            logger.error(f"Unexpected error in check_username_with_telethon: {e}")
-            return None
+            logger.error(f"Error verifying @{username}: {e}")
+            return False
 
     async def close(self):
         """Cleanup resources"""
         if not self.session.closed:
             await self.session.close()
 
-    async def check_fragment_api(self, username: str, retries=3) -> Optional[bool]:
-        """Check username availability with enhanced banned verification"""
+async def batch_check_usernames(usernames: list, batch_size: int = 10) -> dict:
+    """Process usernames in optimized batches"""
+    checker = TelegramUsernameChecker()
+    results = {}
+    total_usernames = len(usernames)
 
-        # Second validation layer - pola terlarang tambahan (Removed strict banned patterns)
-        strict_banned_patterns = [
-            r'^[0-9].*',  # Tidak boleh diawali angka
-            r'.*[_]{2,}.*',  # Tidak boleh ada underscore berurutan
-            r'.*\d{4,}.*',  # Tidak boleh ada 4+ angka berurutan
-            r'^(admin|support|help|info|bot|official|staff|mod)\d*$',  # Kata-kata terlarang dengan angka opsional
-            r'^[a-zA-Z0-9]{1,2}[0-9]+$',  # 1-2 huruf diikuti hanya angka
-            r'.*(_bot|bot_|_admin|admin_|_staff|staff_|_mod|mod_).*',  # Kata terlarang dengan underscore
-            r'.*[0-9]{5,}.*',  # Tidak boleh ada 5+ angka berurutan di manapun
-            r'^(telegram|tg|gram).*',  # Tidak boleh diawali dengan telegram-related
-            r'.*(support|admin|mod|staff|official).*',  # Kata sensitif di manapun
-        ]
+    try:
+        for i in range(0, total_usernames, batch_size):
+            batch = usernames[i:i + batch_size]
+            tasks = [checker.check_fragment_api(username) for username in batch]
 
-        logger.info(f"🔍 Validasi tambahan untuk @{username}")
-        for pattern in strict_banned_patterns:
-            if re.match(pattern, username.lower()):
-                logger.warning(f"❌ @{username} ditolak oleh pola tambahan: {pattern}")
-                return None
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Lanjutkan dengan pengecekan Telethon jika lolos semua validasi
-        telethon_result = await self.check_username_with_telethon(username)
-        if telethon_result is not None:
-            return telethon_result
+            for username, result in zip(batch, batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error in batch for @{username}: {result}")
+                    continue
+                if result is not None:
+                    results[username] = result
 
-        # Jika Telethon gagal, gunakan Fragment API sebagai fallback
-        logger.info(f"Mencoba Fragment API untuk @{username}")
-        return await self._check_fragment_api_internal(username, retries)
+            # Adaptive delay between batches
+            if i + batch_size < total_usernames:
+                delay = 0.5 + (len(batch) / 20)  # Base delay + adjustment for batch size
+                await asyncio.sleep(delay)
 
-    async def _check_fragment_api_internal(self, username: str, retries=3) -> Optional[bool]:
-        """Internal method for Fragment API checks"""
-        # List of suspicious patterns - HANYA YANG SANGAT KRITIS
-        suspicious_patterns = [
-            # Official-sounding names (hanya yang sangat sensitif)
-            r'^.*admin.*$', r'^.*support.*$', r'^.*telegram.*$', r'^.*official.*$',
+    except Exception as e:
+        logger.error(f"Batch processing error: {e}")
+    finally:
+        await checker.close()
 
-            # Brand names (hanya yang paling umum diproteksi)
-            r'^.*apple.*$', r'^.*google.*$', r'^.*meta.*$', r'^.*facebook.*$',
-
-            # Explicit content
-            r'^.*porn.*$', r'^.*xxx.*$', r'^.*sex.*$',
-
-            # Hanya untuk akun scam yang sangat jelas
-            r'^.*spam.*$', r'^.*scam.*$', r'^.*fake.*$'
-        ]
-
-        if any(re.search(pattern, username.lower()) for pattern in suspicious_patterns):
-            logger.info(f'@{username} contains suspicious pattern')
-            return None
-
-        for attempt in range(retries):
-            try:
-                async with self.rate_semaphore: #Added rate limiting here
-                    await asyncio.sleep(random.uniform(1, 3)) #Added random delay
-                    async with self.session.get('https://fragment.com') as response:
-                        if response.status != 200:
-                            logger.warning(f'Fragment API returned status {response.status}, retrying...')
-                            await asyncio.sleep(self.base_delay * (attempt + 1))
-                            continue
-
-                        text = await response.text()
-                        tree = html.fromstring(text)
-                        scripts = tree.xpath('//script/text()')
-                        pattern = re.compile(r'ajInit\((\{.*?})\);', re.DOTALL)
-
-                        api_url = None
-                        for script in scripts:
-                            match = pattern.search(script)
-                            if match:
-                                try:
-                                    data = json.loads(match.group(1))
-                                    api_url = f'https://fragment.com{data.get("apiUrl")}'
-                                    break
-                                except json.JSONDecodeError:
-                                    continue
-
-                        if not api_url:
-                            logger.error(f'@{username} API URL not found, retrying...')
-                            await asyncio.sleep(self.base_delay * (attempt + 1))
-                            continue
-
-                        # Check Fragment API
-                        search_auctions = {'type': 'usernames', 'query': username, 'method': 'searchAuctions'}
-                        async with self.session.post(api_url, data=search_auctions) as response:
-                            if response.status == 429:  # Rate limit
-                                await asyncio.sleep(self.base_delay * (attempt + 1))
-                                continue
-
-                            response_data = await response.json()
-                            if not isinstance(response_data, dict) or not response_data.get('html'):
-                                logger.warning(f'Invalid response data for @{username}, retrying...')
-                                continue
-
-                            tree = html.fromstring(response_data.get('html'))
-                            username_data = tree.xpath('//div[contains(@class, "tm-value")]')[:3]
-
-                            if len(username_data) < 3:
-                                logger.warning(f'Incomplete data for @{username}')
-                                return None
-
-                            username_tag = username_data[0].text_content()
-                            status = username_data[2].text_content()
-                            price = username_data[1].text_content()
-
-                            if username_tag[1:] != username:
-                                logger.warning(f'Username mismatch: {username_tag[1:]} != {username}')
-                                return None
-
-
-                            # Check if username is for sale
-                            if price.isdigit():
-                                logger.info(f'@{username} is for sale: {price}💎')
-                                return None
-
-                            # Final availability check
-                            if status == 'Unavailable':
-                                # Verify with t.me
-                                try:
-                                    await asyncio.sleep(random.uniform(1, 2)) #Added random delay
-                                    async with self.session.get(f'https://t.me/{username}') as resp:
-                                        if resp.status in [403, 404, 410]:
-                                            logger.info(f'@{username} not accessible on t.me')
-                                            return None
-
-                                        content = await resp.text()
-                                        if "If you have Telegram, you can contact" not in content:
-
-                                            # Final verification yang lebih terfokus - hanya periksa hal paling penting
-                                            unavailable_indicators = [
-                                                "This username is used by a channel",
-                                                "This username is used by a group"
-                                            ]
-
-                                            if any(indicator in content for indicator in unavailable_indicators):
-                                                logger.info(f'@{username} appears to be used by a channel or group')
-                                                return None
-
-
-                                            logger.info(f'✅ @{username} is Verified Available ✅')
-                                            return True
-                                        else:
-                                            logger.info(f'@{username} is taken (t.me check)')
-                                            return None
-                                except Exception as e:
-                                    logger.error(f"Error checking t.me for @{username}: {e}")
-                                    return None
-
-                            return None
-
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout checking @{username}")
-                await asyncio.sleep(self.base_delay * (attempt + 1))
-            except Exception as e:
-                logger.error(f"Error checking @{username}: {e}")
-                await asyncio.sleep(self.base_delay * (attempt + 1))
-
-        return None  # Return None after all retries failed
-
-
-    async def get_telegram_web_user(self, username: str) -> bool:
-        """Check username via Telegram web"""
-        try:
-            async with self.session.get(f'https://t.me/{username}') as response:
-                if response.status in [403, 404]:
-                    return False
-
-                text = await response.text()
-                return f"You can contact @{username} right away." in text
-        except Exception as e:
-            logger.error(f"Error checking web user {username}: {e}")
-            return False
+    return results
 
 async def main():
-    checker = TelegramUsernameChecker()
-    username = "testusername"
-    is_available = await checker.check_fragment_api(username)
-
-    if is_available:
-        logger.info(f"✅ Username @{username} is available!")
-    else:
-        logger.info(f"❌ Username @{username} is not available or banned.")
-
-    await checker.close()
+    usernames = ["test1", "test2", "test3", "test4", "test5"]
+    results = await batch_check_usernames(usernames, batch_size=5)
+    for username, available in results.items():
+        status = "available" if available else "unavailable"
+        logger.info(f"Username @{username} is {status}")
 
 if __name__ == "__main__":
     asyncio.run(main())

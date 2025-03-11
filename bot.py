@@ -38,18 +38,17 @@ from username_store import UsernameStore
 from flask import Flask
 from threading import Thread
 
-# Replace the TOKEN section with environment variable approach
+# Replace TOKEN section with proper environment variable handling
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ TELEGRAM_BOT_TOKEN not found in environment variables!")
-    TOKEN = "7816290111:AAF9plFT1IU8e5yqAkx0Av4YZ0BAopqMkEg"
-    logger.warning("Using fallback bot token")
+    sys.exit(1)  # Exit if no token provided
 
-# Debug log for secrets
+# Debug log for secrets (without showing actual values)
 logger.info("Checking environment variables:")
 logger.info(f"TELEGRAM_API_ID present: {bool(os.getenv('TELEGRAM_API_ID'))}")
 logger.info(f"TELEGRAM_API_HASH present: {bool(os.getenv('TELEGRAM_API_HASH'))}")
-logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(os.getenv('TELEGRAM_BOT_TOKEN'))}")
+logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(TOKEN)}")
 
 # Channel information
 INVITE_LINK = "xo6vdaZALL9jN2Zl"
@@ -213,11 +212,54 @@ async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: lis
         logger.info(f"All batches completed in {total_time:.2f}s. Found {len(results)} available usernames")
         return results
 
+# Modify the cleanup interval and file management
+CLEANUP_INTERVAL = 8 * 60  # 8 minutes for file cleanup
+MAX_LOG_SIZE = 5 * 1024 * 1024  # 5MB maximum log size
+MAX_LOG_FILES = 2  # Keep only 2 log files (current and backup)
+
+async def cleanup_files():
+    """Clean up old files and logs periodically"""
+    while True:
+        try:
+            current_time = time.time()
+
+            # Clean up log files
+            log_files = glob.glob('*.log*')
+            if len(log_files) > MAX_LOG_FILES:
+                for old_log in sorted(log_files, key=os.path.getctime)[:-MAX_LOG_FILES]:
+                    try:
+                        os.remove(old_log)
+                        logger.info(f"Removed old log file: {old_log}")
+                    except Exception as e:
+                        logger.error(f"Error removing log {old_log}: {e}")
+
+            # Clean up session files older than 8 minutes
+            session_files = glob.glob('*.session*') + glob.glob('*.session-journal')
+            for session_file in session_files:
+                if os.path.getctime(session_file) < current_time - CLEANUP_INTERVAL:
+                    try:
+                        os.remove(session_file)
+                        logger.info(f"Removed old session file: {session_file}")
+                    except Exception as e:
+                        logger.error(f"Error removing session file {session_file}: {e}")
+
+            # Rotate main log file if too large
+            if os.path.exists('bot.log') and os.path.getsize('bot.log') > MAX_LOG_SIZE:
+                try:
+                    os.rename('bot.log', f'bot.log.{int(time.time())}')
+                    logger.info("Rotated main log file")
+                except Exception as e:
+                    logger.error(f"Error rotating log file: {e}")
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+        await asyncio.sleep(CLEANUP_INTERVAL)
+
+
 @dp.message(Command("allusn"))
 async def handle_allusn(message: Message):
     user_id = message.from_user.id
-
-    # Channel subscription check removed - everyone can use the bot
 
     # Check if user is locked
     if user_id in user_locks:
@@ -315,8 +357,12 @@ async def handle_allusn(message: Message):
         # Create checker instance
         checker = TelegramUsernameChecker()
         try:
+            # Optimize batch size based on current load
+            active_users = len(user_locks)
+            optimal_batch_size = max(5, min(20, 40 // (active_users + 1)))  # Dynamic batch size
+
             # Check availability in batches
-            results = await batch_check_usernames(checker, all_variants)
+            results = await batch_check_usernames(checker, all_variants, batch_size=optimal_batch_size)
 
             # Categorize results based on type
             for username, is_available in results.items():
@@ -428,35 +474,9 @@ async def periodic_log_cleanup():
 
         await asyncio.sleep(3600)  # Run every hour
 
-# Log cleanup function
-def cleanup_old_logs():
-    """Remove old log files except the most recent one"""
-    try:
-        # Find all log files
-        log_files = glob.glob('bot.log*')
-        if not log_files:
-            return
-
-        # Sort by modification time, newest first
-        log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-
-        # Keep only the most recent log file
-        for old_log in log_files[1:]:
-            try:
-                os.remove(old_log)
-                logger.info(f"Removed old log file: {old_log}")
-            except Exception as e:
-                logger.error(f"Error removing log file {old_log}: {e}")
-
-    except Exception as e:
-        logger.error(f"Error during log cleanup: {e}")
-
 async def main():
-    # Clean up old logs on startup
-    cleanup_old_logs()
-
-    # Start periodic log cleanup task
-    asyncio.create_task(periodic_log_cleanup())
+    # Start cleanup task
+    asyncio.create_task(cleanup_files())
 
     # Start username cleanup task
     asyncio.create_task(username_store.start_cleanup_task())
