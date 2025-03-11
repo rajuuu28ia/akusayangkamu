@@ -50,8 +50,8 @@ logger.info(f"TELEGRAM_API_ID present: {bool(os.getenv('TELEGRAM_API_ID'))}")
 logger.info(f"TELEGRAM_API_HASH present: {bool(os.getenv('TELEGRAM_API_HASH'))}")
 logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(TOKEN)}")
 
-# Channel information
-INVITE_LINK = "xo6vdaZALL9jN2Zl"
+# Update channel information
+INVITE_LINK = "zr6kLxcG7TQ5NGU9"
 CHANNEL_ID = "-1002443114227"  # Fixed numeric format for private channel
 CHANNEL_LINK = f"https://t.me/+{INVITE_LINK}"
 
@@ -93,28 +93,6 @@ def run_flask():
             logger.warning(f"Port {port} is in use, trying port {port + 1}")
             port += 1
 
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    """Send a message when the command /start is issued."""
-    welcome_msg = (
-        "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
-        "📋 <b>Cara Penggunaan:</b>\n"
-        "• Gunakan command:\n"
-        "   📝 <code>/allusn [username]</code> - Generate semua variasi username\n\n"
-        "📱 <b>Contoh:</b>\n"
-        "   <code>/allusn username</code>\n\n"
-        "⚠️ <b>Penting:</b>\n"
-        "• 📋 Username yang sudah di-generate akan disimpan\n"
-        "• ⏳ Data username akan dihapus otomatis setelah 5 menit\n"
-        "• 💾 Harap simpan hasil generate di chat pribadi Anda"
-    )
-    await message.reply(welcome_msg)
-
-@dp.message(Command("help"))
-async def help_command(message: Message):
-    """Send a message when the command /help is issued."""
-    await cmd_start(message)
-
 async def check_subscription(user_id: int) -> bool:
     """Check if user is subscribed to the channel"""
     try:
@@ -136,6 +114,42 @@ async def check_subscription(user_id: int) -> bool:
         except Exception as e2:
             logger.error(f"Alternative check failed: {str(e2)}")
             return False
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    """Send a message when the command /start is issued."""
+    # Check channel subscription first
+    user_id = message.from_user.id
+    is_member = await check_subscription(user_id)
+    if not is_member:
+        await message.reply(SUBSCRIBE_MESSAGE, parse_mode="HTML")
+        return
+
+    welcome_msg = (
+        "🤖 <b>Selamat datang di Bot Generator Username Telegram!</b>\n\n"
+        "📋 <b>Cara Penggunaan:</b>\n"
+        "• Gunakan command:\n"
+        "   📝 <code>/allusn [username]</code> - Generate semua variasi username\n\n"
+        "📱 <b>Contoh:</b>\n"
+        "   <code>/allusn username</code>\n\n"
+        "⚠️ <b>Penting:</b>\n"
+        "• 📋 Username yang sudah di-generate akan disimpan\n"
+        "• ⏳ Data username akan dihapus otomatis setelah 5 menit\n"
+        "• 💾 Harap simpan hasil generate di chat pribadi Anda"
+    )
+    await message.reply(welcome_msg, parse_mode="HTML")
+
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    """Send a message when the command /help is issued."""
+    # Check channel subscription first
+    user_id = message.from_user.id
+    is_member = await check_subscription(user_id)
+    if not is_member:
+        await message.reply(SUBSCRIBE_MESSAGE, parse_mode="HTML")
+        return
+
+    await cmd_start(message)
 
 async def batch_check_usernames(checker: TelegramUsernameChecker, usernames: list, batch_size=10) -> dict:
     """
@@ -261,7 +275,13 @@ async def cleanup_files():
 async def handle_allusn(message: Message):
     user_id = message.from_user.id
 
-    # Check if user is locked
+    # Check channel subscription
+    is_member = await check_subscription(user_id)
+    if not is_member:
+        await message.reply(SUBSCRIBE_MESSAGE, parse_mode="HTML")
+        return
+
+    # Lock user
     if user_id in user_locks:
         await message.reply("⚠️ Tunggu proses sebelumnya selesai dulu!")
         return
