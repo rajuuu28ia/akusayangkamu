@@ -30,6 +30,7 @@ wheels/
 session.txt
 *.session
 *.session-journal
+config.py  # Exclude actual config file with secrets
 
 # IDE
 .idea/
@@ -42,3 +43,8 @@ session.txt
 .breakpoints
 replit.nix
 .config/
+
+# Bot specific
+username_checker.log
+bot.log
+generated-icon.png

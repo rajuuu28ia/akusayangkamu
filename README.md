@@ -13,19 +13,27 @@ Bot Telegram untuk menghasilkan dan memeriksa variasi username dengan fitur cang
 ## Cara Setup
 
 1. Clone repository ini
-2. Copy `config.example.py` ke `config.py`
-3. Update nilai-nilai di `config.py` dengan kredensial Anda:
-   - Dapatkan `API_ID` dan `API_HASH` dari https://my.telegram.org/apps
-   - Dapatkan `BOT_TOKEN` dari @BotFather
-   - Set `CHANNEL_ID` dan `INVITE_LINK` untuk channel Anda
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-5. Jalankan bot:
-   ```bash
-   python bot.py
-   ```
+```bash
+git clone https://github.com/rajuuu28ia/akusamakamu.git
+cd akusamakamu
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Setup konfigurasi:
+   - Copy `config.example.py` ke `config.py`
+   - Update nilai-nilai di `config.py` dengan kredensial Anda:
+     - Dapatkan `API_ID` dan `API_HASH` dari https://my.telegram.org/apps
+     - Dapatkan `BOT_TOKEN` dari @BotFather
+     - Set `CHANNEL_ID` dan `INVITE_LINK` untuk channel Anda
+
+4. Jalankan bot:
+```bash
+python bot.py
+```
 
 ## Penggunaan
 
@@ -39,6 +47,16 @@ Bot Telegram untuk menghasilkan dan memeriksa variasi username dengan fitur cang
 - Username yang dihasilkan akan dihapus setelah 5 menit
 - Hindari spam untuk mencegah pemblokiran
 - Simpan hasil generate yang Anda inginkan segera
+
+## Dependencies
+
+- Python 3.11+
+- aiogram
+- aiohttp
+- flask
+- lxml
+- python-dotenv
+- telethon
 
 ## Kontribusi
 
